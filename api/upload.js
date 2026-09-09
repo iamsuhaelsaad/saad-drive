@@ -18,7 +18,7 @@ function parseMultipart(req) {
 
     let parser;
     try {
-      parser = Busboy({ headers: req.headers, limits: { files: 1, fileSize: MAX, fields: 10 } });
+      parser = Busboy({ headers: req.headers, limits: { fileSize: MAX, fields: 10 } });
     } catch {
       reject(Object.assign(new Error('Invalid multipart upload'), { status: 400, source: 'client' }));
       return;
@@ -32,7 +32,7 @@ function parseMultipart(req) {
     });
 
     parser.on('file', (field, stream, info) => {
-      if (field !== 'file') {
+      if (field !== 'file' || file) {
         stream.resume();
         return;
       }
