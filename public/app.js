@@ -10,6 +10,7 @@
     selected: null,
     mode: localStorage.getItem('saadView') || 'list',
     pending: null,
+    failedUploads: [],
   };
 
   const bn = '০১২৩৪৫৬৭৮৯';
@@ -466,6 +467,24 @@
     updateDropVisibility();
   }
 
+  function clearUploadFeedback() {
+    state.failedUploads = [];
+    $('#uploadFeedbackText').textContent = '';
+    $('#uploadErrors').innerHTML = '';
+    $('#retryUpload').classList.add('hide');
+    $('#uploadFeedback').classList.add('hide');
+  }
+
+  function setUploadFeedback(message, failures = []) {
+    const list = $('#uploadErrors');
+    const retry = $('#retryUpload');
+    $('#uploadFeedbackText').textContent = message;
+    list.innerHTML = failures.map(entry => `<li>${escapeHtml(entry.name)}: ${escapeHtml(entry.message)}</li>`).join('');
+    state.failedUploads = failures.map(entry => entry.file);
+    retry.classList.toggle('hide', !state.failedUploads.length);
+    $('#uploadFeedback').classList.remove('hide');
+  }
+
   function uploadSingle(file, index, total) {
     return new Promise((resolve, reject) => {
       const form = new FormData();
@@ -509,18 +528,22 @@
 
     const uploadButton = $('#upload');
     const drop = $('#drop');
+    if (uploadButton.disabled) return;
+    clearUploadFeedback();
     uploadButton.disabled = true;
     drop.classList.add('busy');
     $('#uploadState').classList.remove('hide');
     $('#uploadBar').style.width = '0%';
 
     let uploaded = 0;
+    const failed = [];
 
     for (let index = 0; index < queue.length; index += 1) {
       try {
         await uploadSingle(queue[index], index, queue.length);
         uploaded += 1;
       } catch (error) {
+        failed.push({ file: queue[index], name: queue[index].name, message: error.message });
         toast(`${queue[index].name}: ${error.message}`);
       }
     }
@@ -533,6 +556,12 @@
     if (uploaded) {
       toast(uploaded === queue.length ? 'Uploaded' : `Uploaded ${uploaded}/${queue.length}`);
       refresh();
+    }
+
+    if (uploaded === queue.length) {
+      setUploadFeedback(`Upload complete: ${uploaded}/${queue.length} files uploaded.`, []);
+    } else {
+      setUploadFeedback(`Uploaded ${uploaded}/${queue.length}. Fix errors or retry failed uploads.`, failed);
     }
   }
 
@@ -604,6 +633,7 @@
     $('#upload').onclick = () => $('#fileInput').click();
     $('#drop').onclick = () => $('#fileInput').click();
     $('#fileInput').onchange = event => uploadFiles(event.target.files);
+    $('#retryUpload').onclick = () => uploadFiles(state.failedUploads);
 
     $('#search').oninput = render;
     $('#sort').onchange = render;

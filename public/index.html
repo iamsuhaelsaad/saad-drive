@@ -115,6 +115,17 @@
             <small id="uploadText">Uploading 0%</small>
             <div class="progress"><i id="uploadBar"></i></div>
           </div>
+
+          <div id="uploadFeedback" class="upload-feedback hide" aria-live="polite">
+            <div class="upload-feedback-head">
+              <small id="uploadFeedbackText"></small>
+              <button id="retryUpload" class="tool hide" type="button">
+                <span class="material-symbols-rounded">refresh</span>
+                Retry failed
+              </button>
+            </div>
+            <ul id="uploadErrors" class="upload-errors"></ul>
+          </div>
         </div>
 
         <aside>

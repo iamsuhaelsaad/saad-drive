@@ -108,6 +108,11 @@ button { cursor: pointer; }
 .drop.dragging { background: var(--mint); border-style: solid; }
 .drop.busy { opacity: .65; pointer-events: none; }
 .drop.dragging .material-symbols-rounded { animation: pop .2s ease; }
+.upload-feedback { margin-top: 12px; padding: 12px; border: 1px solid var(--line); border-radius: 12px; background: color-mix(in oklch, var(--surface) 88%, white 12%); }
+.upload-feedback-head { display: flex; justify-content: space-between; align-items: center; gap: 8px; }
+.upload-feedback-head small { color: var(--muted); }
+.upload-errors { margin: 8px 0 0; padding-left: 18px; }
+.upload-errors li { margin: 4px 0; color: var(--danger); font-size: 12px; }
 .panel { padding: 18px; }
 .panel h3 { margin: 0 0 15px; font: 600 16px 'Space Grotesk'; }
 .panel p { font-size: 12px; line-height: 1.4; }
