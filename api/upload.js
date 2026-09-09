@@ -11,24 +11,51 @@ import { deleteTelegramMessage, fetchTelegram, parseTelegramUpload, readTelegram
 
 export const config = { api: { bodyParser: false } };
 
-const MAX_MB = Number(process.env.MAX_UPLOAD_MB || 20);
+const DEFAULT_MAX_UPLOAD_MB = 20;
+const DEFAULT_UPLOAD_TIMEOUT_MS = 60000;
+const parsedUploadLimit = Number(process.env.MAX_UPLOAD_MB);
+const MAX_MB = Number.isFinite(parsedUploadLimit) && parsedUploadLimit > 0 ? parsedUploadLimit : DEFAULT_MAX_UPLOAD_MB;
 const MAX = Math.max(1, MAX_MB) * 1024 * 1024;
+const parsedUploadTimeout = Number(process.env.TELEGRAM_UPLOAD_TIMEOUT_MS || process.env.TELEGRAM_REQUEST_TIMEOUT_MS);
+const TELEGRAM_UPLOAD_TIMEOUT_MS = Number.isFinite(parsedUploadTimeout) && parsedUploadTimeout >= 5000
+  ? parsedUploadTimeout
+  : DEFAULT_UPLOAD_TIMEOUT_MS;
 
 function parseMultipart(req) {
   return new Promise((resolve, reject) => {
-    let parsed = false;
+    let settled = false;
     let tooBig = false;
     let parentId = null;
     let file = null;
     let fileRead = Promise.resolve();
 
+    const fail = error => {
+      if (settled) return;
+      settled = true;
+      reject(error);
+    };
+
+    const succeed = value => {
+      if (settled) return;
+      settled = true;
+      resolve(value);
+    };
+
     let parser;
     try {
       parser = Busboy({ headers: req.headers, limits: { fileSize: MAX, fields: 10 } });
     } catch {
-      reject(Object.assign(new Error('Invalid multipart upload'), { status: 400, source: 'client' }));
+      fail(Object.assign(new Error('Invalid multipart upload'), { status: 400, source: 'client' }));
       return;
     }
+
+    req.once('aborted', () => {
+      fail(Object.assign(new Error('Upload was aborted by the client'), { status: 400, source: 'client' }));
+    });
+
+    req.once('error', () => {
+      fail(Object.assign(new Error('Could not read upload request body'), { status: 400, source: 'client' }));
+    });
 
     parser.on('field', (name, value) => {
       if (name === 'parent_id') {
@@ -81,27 +108,26 @@ function parseMultipart(req) {
     });
 
     parser.once('error', () => {
-      reject(Object.assign(new Error('Could not read upload'), { status: 400, source: 'client' }));
+      fail(Object.assign(new Error('Could not read upload'), { status: 400, source: 'client' }));
     });
 
     parser.once('finish', async () => {
-      if (parsed) return;
-      parsed = true;
+      if (settled) return;
       try {
         await fileRead;
       } catch (error) {
-        reject(error);
+        fail(error);
         return;
       }
       if (tooBig) {
-        reject(Object.assign(new Error(`File exceeds the ${MAX_MB} MB limit.`), { status: 413, source: 'client' }));
+        fail(Object.assign(new Error(`File exceeds the ${MAX_MB} MB limit.`), { status: 413, source: 'client' }));
         return;
       }
       if (!file?.size) {
-        reject(Object.assign(new Error('No file supplied in multipart upload body.'), { status: 400, source: 'client' }));
+        fail(Object.assign(new Error('No file supplied in multipart upload body.'), { status: 400, source: 'client' }));
         return;
       }
-      resolve({ file, parentId });
+      succeed({ file, parentId });
     });
 
     req.pipe(parser);
@@ -169,7 +195,10 @@ export default async function handler(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
   if (!auth(req, res)) return;
 
-  if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHAT_ID) {
+  const requestId = crypto.randomUUID();
+  const telegramChatId = String(process.env.TELEGRAM_CHAT_ID || '').trim();
+
+  if (!process.env.TELEGRAM_BOT_TOKEN || !telegramChatId) {
     return json(res, 503, { error: 'Telegram storage is not configured in production.' });
   }
 
@@ -186,6 +215,14 @@ export default async function handler(req, res) {
 
     const { file, parentId } = await parseMultipart(req);
     uploadedFilePath = file.path;
+    console.info(JSON.stringify({
+      event: 'upload.received',
+      requestId,
+      fileName: file.name,
+      fileSize: file.size,
+      mimeType: file.type,
+      parentId: parentId || null,
+    }));
     const validParentId = await validateParent(parentId);
 
     if (await hasDuplicateName(file.name, validParentId)) {
@@ -196,21 +233,31 @@ export default async function handler(req, res) {
     }
 
     const form = new FormData();
-    form.append('chat_id', process.env.TELEGRAM_CHAT_ID);
+    form.append('chat_id', telegramChatId);
     form.append('caption', `Saad Drive | ${file.name}`);
     form.append('document', await toTelegramUploadBlob(file), file.name);
 
-    const telegramResponse = await fetchTelegram('sendDocument', form);
+    const telegramResponse = await fetchTelegram('sendDocument', form, TELEGRAM_UPLOAD_TIMEOUT_MS);
     const telegram = await readTelegramPayload(telegramResponse);
     const telegramDocument = parseTelegramUpload(telegram);
 
+    console.info(JSON.stringify({
+      event: 'upload.telegram_response',
+      requestId,
+      status: telegramResponse.status,
+      ok: telegramResponse.ok,
+      telegramOk: telegram?.ok === true,
+      hasResult: Boolean(telegram?.result),
+    }));
+
     if (!telegramResponse.ok || !telegram?.ok) {
-      const fallbackDetail = telegramResponse.status
-        ? `Telegram HTTP ${telegramResponse.status}${telegramResponse.statusText ? ` ${telegramResponse.statusText}` : ''}.`
-        : 'Unknown Telegram error.';
+      const fallbackDetail = telegram?.description
+        || (telegram
+          ? `Telegram returned ok=false.${telegramResponse.status ? ` HTTP ${telegramResponse.status}.` : ''}`
+          : `Telegram returned a non-JSON response.${telegramResponse.status ? ` HTTP ${telegramResponse.status}.` : ''}`);
       return json(res, 502, {
         error: 'Telegram rejected the upload.',
-        detail: telegram?.description || fallbackDetail,
+        detail: fallbackDetail,
         source: 'telegram',
       });
     }
@@ -245,7 +292,7 @@ export default async function handler(req, res) {
           ${validParentId},
           ${telegramDocument.fileId},
           ${telegramDocument.messageId},
-          ${telegramDocument.chatId || process.env.TELEGRAM_CHAT_ID},
+          ${telegramDocument.chatId || telegramChatId},
           ${file.checksum || null},
           ${file.type},
           ${telegramDocument.fileSize ?? file.size}
@@ -254,7 +301,7 @@ export default async function handler(req, res) {
       `;
     } catch (error) {
       if (uploadedTelegram?.messageId) {
-        await deleteTelegramMessage(uploadedTelegram.chatId || process.env.TELEGRAM_CHAT_ID, uploadedTelegram.messageId);
+        await deleteTelegramMessage(uploadedTelegram.chatId || telegramChatId, uploadedTelegram.messageId);
       }
       if (error?.code === '23505') {
         return json(res, 409, {
@@ -268,8 +315,21 @@ export default async function handler(req, res) {
       });
     }
 
+    console.info(JSON.stringify({
+      event: 'upload.db_saved',
+      requestId,
+      telegramMessageId: uploadedTelegram?.messageId || null,
+      telegramFileIdPresent: Boolean(uploadedTelegram?.fileId),
+    }));
     return json(res, 201, { item: result.rows[0] });
   } catch (error) {
+    console.error(JSON.stringify({
+      event: 'upload.failed',
+      requestId,
+      source: error?.source || (error instanceof TypeError ? 'telegram' : 'server'),
+      message: error?.message || 'Upload failed',
+      status: error?.status || null,
+    }));
     if (error?.name === 'AbortError') {
       return json(res, 504, { error: 'Telegram request timed out.', source: 'telegram' });
     }

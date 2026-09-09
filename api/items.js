@@ -1,7 +1,7 @@
 import { sql } from '@vercel/postgres';
 import { auth, cleanName, isUuid, json, readJsonBody } from './_security.js';
 import { ensureDb, withDbTransaction } from './_db.js';
-import { deleteTelegramMessage } from './_telegram.js';
+import { cleanupTelegramFileReference } from './_telegram.js';
 import { wouldCreateCycleFromAncestors } from './_tree_guards.js';
 
 function normalizeParentId(value) {
@@ -137,6 +137,22 @@ async function listFilesForDeletion(id, queryable = sql) {
   return result.rows;
 }
 
+function summarizeTelegramCleanup(results) {
+  const summary = { attempted: 0, deleted: 0, skipped: 0, failed: 0 };
+  for (const result of results) {
+    if (result.status === 'deleted') {
+      summary.attempted += 1;
+      summary.deleted += 1;
+    } else if (result.status === 'failed') {
+      summary.attempted += 1;
+      summary.failed += 1;
+    } else {
+      summary.skipped += 1;
+    }
+  }
+  return summary;
+}
+
 export default async function handler(req, res) {
   if (!auth(req, res)) return;
 
@@ -254,28 +270,57 @@ export default async function handler(req, res) {
       if (!isUuid(id)) return json(res, 400, { error: 'id is required' });
 
       const files = await listFilesForDeletion(id);
+      const cleanupResults = [];
+      const fallbackChatId = String(process.env.TELEGRAM_CHAT_ID || '').trim() || null;
+
+      console.info(JSON.stringify({
+        event: 'items.delete.start',
+        itemId: id,
+        fileCount: files.length,
+      }));
+
+      for (const file of files) {
+        const cleanup = await cleanupTelegramFileReference(
+          {
+            telegram_chat_id: file.telegram_chat_id,
+            telegram_message_id: file.telegram_message_id,
+            telegram_file_id: file.telegram_file_id,
+          },
+          fallbackChatId
+        );
+        cleanupResults.push({
+          id: file.id,
+          status: cleanup.status,
+          ...(cleanup.reason ? { detail: cleanup.reason } : {}),
+        });
+      }
+
+      const cleanupSummary = summarizeTelegramCleanup(cleanupResults);
+
       if (!files.length) {
         const result = await sql`DELETE FROM drive_items WHERE id = ${id} RETURNING id`;
         return result.rowCount
-          ? json(res, 200, { deleted: id })
+          ? json(res, 200, { deleted: id, telegram_cleanup: cleanupSummary })
           : json(res, 404, { error: 'Not found' });
       }
 
-      for (const file of files) {
-        if (!file.telegram_message_id) continue;
-        const deletion = await deleteTelegramMessage(file.telegram_chat_id || process.env.TELEGRAM_CHAT_ID, Number(file.telegram_message_id));
-        if (!deletion.ok) {
-          return json(res, 502, {
-            error: 'Failed to remove file from Telegram storage.',
-            detail: deletion.description,
-            source: 'telegram',
-          });
-        }
-      }
-
       const result = await sql`DELETE FROM drive_items WHERE id = ${id} RETURNING id`;
+      console.info(JSON.stringify({
+        event: 'items.delete.telegram_cleanup',
+        itemId: id,
+        ...cleanupSummary,
+      }));
+
+      const details = cleanupResults.slice(0, 25);
       return result.rowCount
-        ? json(res, 200, { deleted: id })
+        ? json(res, 200, {
+            deleted: id,
+            telegram_cleanup: {
+              ...cleanupSummary,
+              results: details,
+              truncated: cleanupResults.length > details.length ? cleanupResults.length - details.length : 0,
+            },
+          })
         : json(res, 404, { error: 'Not found' });
     }
 
