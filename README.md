@@ -1,18 +1,17 @@
-# Saad Drive Telegram backend pass
+# Saad Drive database pass
 
-Adds authenticated Telegram upload and download routes to the Vercel project.
+Adds persistent folders and file metadata with Vercel Postgres, while keeping Telegram as binary storage.
 
-## Routes
-- `POST /api/auth`: returns a 2-hour JWT after validating `APP_PIN_HASH`.
-- `POST /api/upload`: multipart upload, max size from `MAX_UPLOAD_MB`, sends the file to Telegram, returns `file_id`.
-- `GET /api/download?file_id=...`: authenticated Telegram proxy download.
-- `GET /api/files`: protected placeholder until a metadata database is connected.
-
-## Frontend wiring
-Use `Authorization: Bearer ${sessionStorage.getItem('token')}`. Upload with `FormData` field `file`, then save the returned `file.id` with the file name. Download through `/api/download?file_id=...` with the same auth header.
+## New routes
+- `GET /api/items?parent_id=` list folders/files
+- `POST /api/items` create `{name,kind:"folder",parent_id:null}`
+- `PATCH /api/items` rename/move `{id,name,parent_id}`
+- `DELETE /api/items?id=` delete a folder or file record
+- `POST /api/upload` multipart field `file`, optional `parent_id`; uploads to Telegram and persists metadata
+- `GET /api/download?id=` authenticated download by metadata id
 
 ## Deploy
-Merge these `api` files into the deployed project, confirm all five Vercel environment variables are set for Production, then redeploy. Do not place the bot token in frontend JavaScript.
+Add a Vercel Postgres/Neon storage integration so `POSTGRES_URL` exists, run `schema.sql` once if desired, add the Telegram/auth variables, merge the `api` folder, then redeploy. The API also creates the table/index on first authenticated request.
 
-## Important
-Telegram stores the binary, but it is not a folder database. The next pass must add a persistent metadata store, such as Vercel Postgres, Neon, Supabase, or another database, for folders, search, rename, delete, and reliable listing.
+## Frontend wiring
+Use the JWT in `Authorization: Bearer ...`. The existing UI needs to call `/api/items` to replace demo rows, send uploads to `/api/upload`, and download from `/api/download?id=...`.
