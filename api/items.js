@@ -1,6 +1,8 @@
 import { sql } from '@vercel/postgres';
 import { auth, cleanName, isUuid, json, readJsonBody } from './_security.js';
-import { ensureDb } from './_db.js';
+import { ensureDb, withDbTransaction } from './_db.js';
+import { deleteTelegramMessage } from './_telegram.js';
+import { wouldCreateCycleFromAncestors } from './_tree_guards.js';
 
 function normalizeParentId(value) {
   return value === undefined || value === null || value === '' ? null : String(value);
@@ -12,26 +14,44 @@ function httpError(status, message) {
   return error;
 }
 
+function queryFn(queryable) {
+  return typeof queryable === 'function' ? queryable : queryable.sql.bind(queryable);
+}
+
 function assertUuidOrNull(value, label = 'id') {
   if (value === null) return null;
   if (!isUuid(value)) throw httpError(400, `${label} must be a valid UUID`);
   return value;
 }
 
-async function getItem(id) {
-  const result = await sql`
-    SELECT id, name, kind, parent_id, telegram_file_id, mime_type, size_bytes, created_at, updated_at
-    FROM drive_items
-    WHERE id = ${id}
-  `;
+async function lockTreeMutations(queryable) {
+  const run = queryFn(queryable);
+  await run`SELECT pg_advisory_xact_lock(hashtext('drive_items_tree_mutation'))`;
+}
+
+async function getItem(id, queryable = sql, forUpdate = false) {
+  const run = queryFn(queryable);
+  const result = forUpdate
+    ? await run`
+        SELECT id, name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes, created_at, updated_at
+        FROM drive_items
+        WHERE id = ${id}
+        FOR UPDATE
+      `
+    : await run`
+        SELECT id, name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes, created_at, updated_at
+        FROM drive_items
+        WHERE id = ${id}
+      `;
   return result.rows[0] || null;
 }
 
-async function assertValidParent(parentId, sourceItem = null) {
+async function assertValidParent(parentId, sourceItem = null, queryable = sql) {
+  const run = queryFn(queryable);
   const normalizedParentId = assertUuidOrNull(normalizeParentId(parentId), 'parent_id');
   if (!normalizedParentId) return null;
 
-  const parent = await getItem(normalizedParentId);
+  const parent = await getItem(normalizedParentId, run, Boolean(sourceItem));
   if (!parent) throw httpError(404, 'Destination folder not found');
   if (parent.kind !== 'folder') throw httpError(400, 'parent_id must reference a folder');
 
@@ -41,12 +61,20 @@ async function assertValidParent(parentId, sourceItem = null) {
     }
 
     if (sourceItem.kind === 'folder') {
-      let cursor = parent;
-      while (cursor) {
-        if (cursor.id === sourceItem.id) {
-          throw httpError(400, 'Cannot place a folder inside itself or its descendants');
-        }
-        cursor = cursor.parent_id ? await getItem(cursor.parent_id) : null;
+      const cycleResult = await run`
+        WITH RECURSIVE chain AS (
+          SELECT id, parent_id
+          FROM drive_items
+          WHERE id = ${parent.id}
+          UNION ALL
+          SELECT di.id, di.parent_id
+          FROM drive_items di
+          JOIN chain ch ON di.id = ch.parent_id
+        )
+        SELECT id FROM chain
+      `;
+      if (wouldCreateCycleFromAncestors(sourceItem.id, cycleResult.rows.map(row => row.id))) {
+        throw httpError(400, 'Cannot place a folder inside itself or its descendants');
       }
     }
   }
@@ -54,23 +82,27 @@ async function assertValidParent(parentId, sourceItem = null) {
   return parent.id;
 }
 
-async function cloneItemTree(sourceItem, targetParentId) {
+async function cloneItemTree(sourceItem, targetParentId, queryable = sql) {
+  const run = queryFn(queryable);
   const childrenResult = sourceItem.kind === 'folder'
-    ? await sql`
-        SELECT id, name, kind, parent_id, telegram_file_id, mime_type, size_bytes, created_at, updated_at
+    ? await run`
+        SELECT id, name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes, created_at, updated_at
         FROM drive_items
         WHERE parent_id = ${sourceItem.id}
         ORDER BY created_at ASC, lower(name)
       `
     : { rows: [] };
 
-  const insertResult = await sql`
-    INSERT INTO drive_items(name, kind, parent_id, telegram_file_id, mime_type, size_bytes)
+  const insertResult = await run`
+    INSERT INTO drive_items(name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes)
     VALUES(
       ${sourceItem.name},
       ${sourceItem.kind},
       ${targetParentId},
       ${sourceItem.telegram_file_id || null},
+      ${sourceItem.telegram_message_id || null},
+      ${sourceItem.telegram_chat_id || null},
+      ${sourceItem.checksum_sha256 || null},
       ${sourceItem.mime_type || null},
       ${sourceItem.size_bytes || 0}
     )
@@ -80,10 +112,29 @@ async function cloneItemTree(sourceItem, targetParentId) {
   const copy = insertResult.rows[0];
 
   for (const child of childrenResult.rows) {
-    await cloneItemTree(child, copy.id);
+    await cloneItemTree(child, copy.id, run);
   }
 
   return copy;
+}
+
+async function listFilesForDeletion(id, queryable = sql) {
+  const run = queryFn(queryable);
+  const result = await run`
+    WITH RECURSIVE descendants AS (
+      SELECT id, kind, telegram_file_id, telegram_message_id, telegram_chat_id
+      FROM drive_items
+      WHERE id = ${id}
+      UNION ALL
+      SELECT di.id, di.kind, di.telegram_file_id, di.telegram_message_id, di.telegram_chat_id
+      FROM drive_items di
+      JOIN descendants d ON di.parent_id = d.id
+    )
+    SELECT id, telegram_file_id, telegram_message_id, telegram_chat_id
+    FROM descendants
+    WHERE kind = 'file'
+  `;
+  return result.rows;
 }
 
 export default async function handler(req, res) {
@@ -95,7 +146,7 @@ export default async function handler(req, res) {
     if (req.method === 'GET') {
       if (req.query.all === '1') {
         const result = await sql`
-          SELECT id, name, kind, parent_id, telegram_file_id, mime_type, size_bytes, created_at, updated_at
+          SELECT id, name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes, created_at, updated_at
           FROM drive_items
           ORDER BY kind DESC, lower(name)
         `;
@@ -105,13 +156,13 @@ export default async function handler(req, res) {
       const parent = assertUuidOrNull(normalizeParentId(req.query.parent_id), 'parent_id');
       const result = parent
         ? await sql`
-            SELECT id, name, kind, parent_id, telegram_file_id, mime_type, size_bytes, created_at, updated_at
+            SELECT id, name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes, created_at, updated_at
             FROM drive_items
             WHERE parent_id = ${parent}
             ORDER BY kind DESC, lower(name)
           `
         : await sql`
-            SELECT id, name, kind, parent_id, telegram_file_id, mime_type, size_bytes, created_at, updated_at
+            SELECT id, name, kind, parent_id, telegram_file_id, telegram_message_id, telegram_chat_id, checksum_sha256, mime_type, size_bytes, created_at, updated_at
             FROM drive_items
             WHERE parent_id IS NULL
             ORDER BY kind DESC, lower(name)
@@ -126,11 +177,14 @@ export default async function handler(req, res) {
       if (body.action === 'copy') {
         if (!body.id || !isUuid(String(body.id))) return json(res, 400, { error: 'id is required' });
 
-        const sourceItem = await getItem(String(body.id));
-        if (!sourceItem) return json(res, 404, { error: 'Source item not found' });
-
-        const targetParentId = await assertValidParent(body.parent_id, sourceItem);
-        const copy = await cloneItemTree(sourceItem, targetParentId);
+        const copy = await withDbTransaction(async client => {
+          const run = client.sql.bind(client);
+          await lockTreeMutations(run);
+          const sourceItem = await getItem(String(body.id), run, true);
+          if (!sourceItem) throw httpError(404, 'Source item not found');
+          const targetParentId = await assertValidParent(body.parent_id, sourceItem, run);
+          return cloneItemTree(sourceItem, targetParentId, run);
+        });
         return json(res, 201, { item: copy });
       }
 
@@ -155,40 +209,69 @@ export default async function handler(req, res) {
       const id = String(body.id || '');
       if (!isUuid(id)) return json(res, 400, { error: 'id is required' });
 
-      const currentItem = await getItem(id);
-      if (!currentItem) return json(res, 404, { error: 'Not found' });
-
       const hasName = body.name !== undefined;
       const hasParent = body.parent_id !== undefined;
 
       if (!hasName && !hasParent) {
-        return json(res, 200, { item: currentItem });
+        const currentItem = await getItem(id);
+        return currentItem
+          ? json(res, 200, { item: currentItem })
+          : json(res, 404, { error: 'Not found' });
       }
 
-      let nextName = currentItem.name;
-      if (hasName) {
-        nextName = cleanName(body.name);
-        if (!nextName) return json(res, 400, { error: 'name must be a non-empty string up to 255 chars' });
-      }
+      const updated = await withDbTransaction(async client => {
+        const run = client.sql.bind(client);
+        await lockTreeMutations(run);
 
-      const nextParentId = hasParent
-        ? await assertValidParent(body.parent_id, currentItem)
-        : currentItem.parent_id;
+        const currentItem = await getItem(id, run, true);
+        if (!currentItem) throw httpError(404, 'Not found');
 
-      const result = await sql`
-        UPDATE drive_items
-        SET name = ${nextName},
-            parent_id = ${nextParentId}
-        WHERE id = ${id}
-        RETURNING *
-      `;
+        let nextName = currentItem.name;
+        if (hasName) {
+          nextName = cleanName(body.name);
+          if (!nextName) throw httpError(400, 'name must be a non-empty string up to 255 chars');
+        }
 
-      return json(res, 200, { item: result.rows[0] });
+        const nextParentId = hasParent
+          ? await assertValidParent(body.parent_id, currentItem, run)
+          : currentItem.parent_id;
+
+        const result = await run`
+          UPDATE drive_items
+          SET name = ${nextName},
+              parent_id = ${nextParentId}
+          WHERE id = ${id}
+          RETURNING *
+        `;
+        return result.rows[0];
+      });
+
+      return json(res, 200, { item: updated });
     }
 
     if (req.method === 'DELETE') {
       const id = String(req.query.id || '');
       if (!isUuid(id)) return json(res, 400, { error: 'id is required' });
+
+      const files = await listFilesForDeletion(id);
+      if (!files.length) {
+        const result = await sql`DELETE FROM drive_items WHERE id = ${id} RETURNING id`;
+        return result.rowCount
+          ? json(res, 200, { deleted: id })
+          : json(res, 404, { error: 'Not found' });
+      }
+
+      for (const file of files) {
+        if (!file.telegram_message_id) continue;
+        const deletion = await deleteTelegramMessage(file.telegram_chat_id || process.env.TELEGRAM_CHAT_ID, Number(file.telegram_message_id));
+        if (!deletion.ok) {
+          return json(res, 502, {
+            error: 'Failed to remove file from Telegram storage.',
+            detail: deletion.description,
+            source: 'telegram',
+          });
+        }
+      }
 
       const result = await sql`DELETE FROM drive_items WHERE id = ${id} RETURNING id`;
       return result.rowCount

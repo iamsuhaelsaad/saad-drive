@@ -1,8 +1,17 @@
 import crypto from 'node:crypto';
 import jwt from 'jsonwebtoken';
 
+export function setSecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'no-referrer');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+}
+
 export function json(res, status, body) {
-  res.status(status).setHeader('Content-Type', 'application/json');
+  res.status(status);
+  setSecurityHeaders(res);
+  res.setHeader('Content-Type', 'application/json');
   res.end(JSON.stringify(body));
 }
 
@@ -42,8 +51,12 @@ export function auth(req, res) {
 
     if (!token) throw new Error('Unauthorized');
     return jwt.verify(token, process.env.JWT_SECRET);
-  } catch {
-    json(res, 401, { error: 'Unauthorized' });
+  } catch (error) {
+    if (error?.name === 'TokenExpiredError') {
+      json(res, 401, { error: 'Token expired', code: 'TOKEN_EXPIRED' });
+      return null;
+    }
+    json(res, 401, { error: 'Unauthorized', code: 'UNAUTHORIZED' });
     return null;
   }
 }

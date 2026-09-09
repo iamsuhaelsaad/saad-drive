@@ -1,6 +1,12 @@
-import { sql } from '@vercel/postgres';
+import { createPool, sql } from '@vercel/postgres';
 
 let ready;
+let txPool;
+
+function getTxPool() {
+  if (!txPool) txPool = createPool();
+  return txPool;
+}
 
 async function createUniqueIndexesIfSafe() {
   const rootDupes = await sql`
@@ -47,14 +53,22 @@ export function ensureDb() {
         kind text NOT NULL CHECK (kind IN ('file','folder')),
         parent_id uuid REFERENCES drive_items(id) ON DELETE CASCADE,
         telegram_file_id text,
+        telegram_message_id bigint,
+        telegram_chat_id text,
+        checksum_sha256 text,
         mime_type text,
         size_bytes bigint DEFAULT 0,
         created_at timestamptz NOT NULL DEFAULT now(),
         updated_at timestamptz NOT NULL DEFAULT now()
       )`;
 
+      await sql`ALTER TABLE drive_items ADD COLUMN IF NOT EXISTS telegram_message_id bigint`;
+      await sql`ALTER TABLE drive_items ADD COLUMN IF NOT EXISTS telegram_chat_id text`;
+      await sql`ALTER TABLE drive_items ADD COLUMN IF NOT EXISTS checksum_sha256 text`;
+
       await sql`CREATE INDEX IF NOT EXISTS drive_items_parent_idx ON drive_items(parent_id)`;
       await sql`CREATE INDEX IF NOT EXISTS drive_items_name_idx ON drive_items(lower(name))`;
+      await sql`CREATE INDEX IF NOT EXISTS drive_items_telegram_message_idx ON drive_items(telegram_chat_id, telegram_message_id) WHERE telegram_message_id IS NOT NULL`;
 
       await sql`
         DO $$
@@ -95,6 +109,15 @@ export function ensureDb() {
         EXECUTE FUNCTION set_drive_items_updated_at()
       `;
 
+      await sql`CREATE TABLE IF NOT EXISTS pin_auth_attempts (
+        key_hash text PRIMARY KEY,
+        attempts integer NOT NULL DEFAULT 0,
+        window_started_at timestamptz NOT NULL DEFAULT now(),
+        lock_until timestamptz,
+        updated_at timestamptz NOT NULL DEFAULT now()
+      )`;
+      await sql`CREATE INDEX IF NOT EXISTS pin_auth_attempts_lock_until_idx ON pin_auth_attempts(lock_until)`;
+
       await createUniqueIndexesIfSafe();
     })().catch(error => {
       ready = undefined;
@@ -102,4 +125,23 @@ export function ensureDb() {
     });
   }
   return ready;
+}
+
+export async function withDbTransaction(work) {
+  const client = await getTxPool().connect();
+  try {
+    await client.sql`BEGIN`;
+    const result = await work(client);
+    await client.sql`COMMIT`;
+    return result;
+  } catch (error) {
+    try {
+      await client.sql`ROLLBACK`;
+    } catch {
+      // ignore rollback failures
+    }
+    throw error;
+  } finally {
+    client.release();
+  }
 }

@@ -4,6 +4,7 @@ Private cloud-drive style app for personal use. Metadata is stored in Vercel Pos
 
 ## Features
 - PIN login (`/api/auth`) that returns JWT
+- JWT refresh (`/api/auth/refresh`) for expired-session recovery
 - Folder/file metadata tree (`/api/items`)
 - Multipart upload to Telegram (`/api/upload`)
 - Authenticated download proxy (`/api/download`)
@@ -18,6 +19,10 @@ Set these in Vercel Project Settings:
 - `TELEGRAM_BOT_TOKEN` - Telegram bot token
 - `TELEGRAM_CHAT_ID` - target chat/channel ID for storage
 - `MAX_UPLOAD_MB` (optional) - upload limit in MB (default: `20`)
+- `MAX_DOWNLOAD_MB` (optional) - download limit in MB (default: `200`)
+- `DOWNLOAD_TIMEOUT_MS` (optional) - Telegram download timeout in ms (default: `30000`)
+- `TELEGRAM_REQUEST_TIMEOUT_MS` (optional) - Telegram API request timeout in ms (default: `20000`)
+- `JWT_REFRESH_GRACE_MS` (optional) - refresh grace window after JWT expiry in ms (default: `86400000`)
 
 ### Generate `APP_PIN_HASH`
 ```bash
@@ -38,6 +43,7 @@ The API also auto-initializes the schema on first authenticated request (idempot
 All routes except `/api/auth` and `/api/health` require an `Authorization` bearer token.
 
 - `POST /api/auth` body: `{ "pin": "1234" }`
+- `POST /api/auth/refresh` with an `Authorization` bearer token header
 - `GET /api/items?parent_id=<uuid>`
 - `GET /api/items?all=1`
 - `POST /api/items` body: `{ "name": "Docs", "kind": "folder", "parent_id": null }`
@@ -67,6 +73,7 @@ Use the JWT in request `Authorization` headers. The existing UI calls:
 - `502 Telegram response was incomplete after upload.` = Telegram responded but did not return a file id.
 - `409 ... already exists ...` = duplicate name conflict in destination folder.
 - `500 Upload succeeded on Telegram but saving metadata failed.` = Telegram upload completed but database persistence failed.
+  - When this happens, the API now attempts compensating cleanup by deleting the uploaded Telegram message.
 
 ## UI behavior
 The frontend keeps the same API contract and storage model, with a Google Drive-inspired layout polish:

@@ -11,6 +11,7 @@
     mode: localStorage.getItem('saadView') || 'list',
     pending: null,
   };
+  let refreshTokenPromise = null;
 
   const bn = '০১২৩৪৫৬৭৮৯';
   const ar = '٠١٢٣٤٥٦٧٨٩';
@@ -39,15 +40,60 @@
     return sessionStorage.getItem('token') || '';
   }
 
+  function setToken(token) {
+    if (token) sessionStorage.setItem('token', token);
+    else sessionStorage.removeItem('token');
+  }
+
+  function isMobileViewport() {
+    return window.matchMedia('(max-width: 700px)').matches;
+  }
+
+  function requireLogin(message = 'Session expired. Please login again.') {
+    setToken('');
+    $('#app').classList.add('hide');
+    $('#lock').classList.remove('hide');
+    $('#unlock').disabled = false;
+    $('#unlock').textContent = 'Unlock workspace →';
+    $('#error').textContent = message;
+    $('#pin').focus();
+  }
+
+  async function refreshSessionToken() {
+    if (refreshTokenPromise) return refreshTokenPromise;
+    const currentToken = getToken();
+    if (!currentToken) throw new Error('No session token');
+
+    refreshTokenPromise = (async () => {
+      const response = await fetch('/api/auth/refresh', {
+        method: 'POST',
+        headers: { Authorization: 'Bearer ' + currentToken },
+      });
+      const payload = await response.json().catch(() => ({}));
+      if (!response.ok || !payload?.token) {
+        throw new Error(payload.error || 'Session refresh failed');
+      }
+      setToken(payload.token);
+      return payload.token;
+    })();
+
+    try {
+      return await refreshTokenPromise;
+    } finally {
+      refreshTokenPromise = null;
+    }
+  }
+
   async function api(path, options = {}) {
-    const headers = new Headers(options.headers || {});
+    const { _retry = false, ...fetchOptions } = options;
+    const headers = new Headers(fetchOptions.headers || {});
     const token = getToken();
 
     if (token && !headers.has('Authorization')) {
-      headers.set('Authorization', `Bearer ${token}`);
+      headers.set('Authorization', 'Bearer ' + token);
     }
 
-    const response = await fetch(path, { ...options, headers });
+    const response = await fetch(path, { ...fetchOptions, headers });
     let payload = {};
 
     try {
@@ -57,6 +103,15 @@
     }
 
     if (!response.ok) {
+      if (response.status === 401 && token && !_retry) {
+        try {
+          await refreshSessionToken();
+          return api(path, { ...options, _retry: true });
+        } catch (error) {
+          requireLogin(error.message || 'Session expired. Please login again.');
+          throw error;
+        }
+      }
       const source = payload.source ? `${payload.source}: ` : '';
       const detail = payload.detail ? ` ${payload.detail}` : '';
       throw new Error(`${source}${payload.error || 'Request failed'}${detail}`.trim());
@@ -112,7 +167,19 @@
     if (state.selected) {
       const selectedItem = state.all.find(item => item.id === state.selected);
       $('#selectedName').textContent = selectedItem ? selectedItem.name : '';
+      $('#downloadSelected').classList.toggle('hide', selectedItem?.kind === 'folder');
     }
+  }
+
+  function folderPath(folderId) {
+    const map = new Map(state.all.map(item => [item.id, item]));
+    const parts = [];
+    let cursor = map.get(folderId);
+    while (cursor) {
+      parts.unshift(cursor.name);
+      cursor = cursor.parent_id ? map.get(cursor.parent_id) : null;
+    }
+    return parts.length ? `Home / ${parts.join(' / ')}` : 'Home';
   }
 
   function setTableMode() {
@@ -207,6 +274,10 @@
     document.querySelectorAll('.row').forEach(row => {
       row.onclick = event => {
         if (event.target.closest('button')) return;
+        if (row.dataset.kind === 'folder' && isMobileViewport()) {
+          openFolder(row.dataset.id);
+          return;
+        }
         state.selected = row.dataset.id;
         updateSelectionVisibility();
         render();
@@ -279,10 +350,12 @@
   }
 
   function openMenu(id, anchor) {
+    const entry = state.all.find(item => item.id === id);
+    const isFolder = entry?.kind === 'folder';
     const menu = $('#menuBox');
     const rect = anchor.getBoundingClientRect();
     menu.innerHTML = [
-      '<button data-a="download"><span class="material-symbols-rounded">download</span>Download</button>',
+      !isFolder ? '<button data-a="download"><span class="material-symbols-rounded">download</span>Download</button>' : '',
       '<button data-a="rename"><span class="material-symbols-rounded">drive_file_rename_outline</span>Rename</button>',
       '<button data-a="move"><span class="material-symbols-rounded">drive_file_move</span>Move</button>',
       '<button data-a="copy"><span class="material-symbols-rounded">content_copy</span>Copy</button>',
@@ -309,7 +382,7 @@
   async function download(id) {
     try {
       const response = await fetch(`/api/download?id=${encodeURIComponent(id)}`, {
-        headers: { Authorization: `Bearer ${getToken()}` },
+        headers: { Authorization: 'Bearer ' + getToken() },
       });
 
       if (!response.ok) {
@@ -344,14 +417,24 @@
   }
 
   async function moveCopy(id, type) {
-    const name = prompt(type === 'copy' ? 'Copy to folder name' : 'Move to folder name');
-    const folder = state.folders.find(entry => entry.name.toLowerCase() === String(name || '').toLowerCase());
-    const body = { id, parent_id: folder ? folder.id : null };
+    const item = state.all.find(entry => entry.id === id);
+    if (!item) return;
+    const destinations = state.folders.filter(folder => folder.id !== id);
+    const choices = destinations
+      .map((folder, index) => `${index + 1}. ${folderPath(folder.id)}`);
+    const answer = prompt(
+      `${type === 'copy' ? 'Copy' : 'Move'} "${item.name}" to:\n0. Home\n${choices.join('\n')}\n\nEnter destination number`
+    );
+    if (answer === null) return;
 
-    if (name && !folder) {
-      toast('Folder not found');
+    const index = Number.parseInt(String(answer).trim(), 10);
+    if (Number.isNaN(index) || index < 0 || index > choices.length) {
+      toast('Invalid destination');
       return;
     }
+
+    const selectedFolder = index === 0 ? null : destinations[index - 1];
+    const body = { id, parent_id: selectedFolder ? selectedFolder.id : null };
 
     if (type === 'copy') body.action = 'copy';
 
@@ -474,7 +557,7 @@
 
       const request = new XMLHttpRequest();
       request.open('POST', '/api/upload');
-      request.setRequestHeader('Authorization', `Bearer ${getToken()}`);
+      request.setRequestHeader('Authorization', 'Bearer ' + getToken());
 
       request.upload.onprogress = event => {
         if (!event.lengthComputable) return;
@@ -549,7 +632,7 @@
         headers: { 'content-type': 'application/json' },
         body: JSON.stringify({ pin: norm($('#pin').value) }),
       });
-      sessionStorage.setItem('token', data.token);
+      setToken(data.token);
       $('#lock').classList.add('hide');
       $('#app').classList.remove('hide');
       toast('Welcome back to Saad Drive');
@@ -597,7 +680,7 @@
 
     $('#logout').onclick = () => {
       if (!confirm('Log out of Saad Drive?')) return;
-      sessionStorage.removeItem('token');
+      setToken('');
       location.reload();
     };
 
@@ -622,7 +705,10 @@
 
     $('#menu').onclick = () => $('#side').classList.toggle('open');
     $('#more').onclick = newFolder;
-    $('#downloadSelected').onclick = () => state.selected && download(state.selected);
+    $('#downloadSelected').onclick = () => {
+      const selectedItem = state.all.find(item => item.id === state.selected);
+      if (selectedItem?.kind === 'file') download(state.selected);
+    };
     $('#renameSelected').onclick = () => state.selected && rename(state.selected);
     $('#deleteSelected').onclick = () => state.selected && removeItem(state.selected);
     $('#profile').onclick = () => $('#profileCard').classList.toggle('hide');

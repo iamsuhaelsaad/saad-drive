@@ -3,6 +3,9 @@
   "version": "1.3.0",
   "private": true,
   "type": "module",
+  "scripts": {
+    "test": "node --test"
+  },
   "dependencies": {
     "@vercel/node": "latest",
     "@vercel/postgres": "latest",

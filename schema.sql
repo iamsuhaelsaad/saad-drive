@@ -6,6 +6,9 @@ CREATE TABLE IF NOT EXISTS drive_items (
   kind text NOT NULL CHECK (kind IN ('file','folder')),
   parent_id uuid REFERENCES drive_items(id) ON DELETE CASCADE,
   telegram_file_id text,
+  telegram_message_id bigint,
+  telegram_chat_id text,
+  checksum_sha256 text,
   mime_type text,
   size_bytes bigint DEFAULT 0,
   created_at timestamptz NOT NULL DEFAULT now(),
@@ -16,8 +19,19 @@ CREATE TABLE IF NOT EXISTS drive_items (
 
 CREATE INDEX IF NOT EXISTS drive_items_parent_idx ON drive_items(parent_id);
 CREATE INDEX IF NOT EXISTS drive_items_name_idx ON drive_items(lower(name));
+CREATE INDEX IF NOT EXISTS drive_items_telegram_message_idx ON drive_items(telegram_chat_id, telegram_message_id) WHERE telegram_message_id IS NOT NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS drive_items_unique_root_name_idx ON drive_items(lower(name)) WHERE parent_id IS NULL;
 CREATE UNIQUE INDEX IF NOT EXISTS drive_items_unique_parent_name_idx ON drive_items(parent_id, lower(name)) WHERE parent_id IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS pin_auth_attempts (
+  key_hash text PRIMARY KEY,
+  attempts integer NOT NULL DEFAULT 0,
+  window_started_at timestamptz NOT NULL DEFAULT now(),
+  lock_until timestamptz,
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS pin_auth_attempts_lock_until_idx ON pin_auth_attempts(lock_until);
 
 CREATE OR REPLACE FUNCTION set_drive_items_updated_at()
 RETURNS trigger
