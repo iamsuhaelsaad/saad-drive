@@ -5,12 +5,13 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <title>Saad Drive</title>
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 64 64'%3E%3Crect width='64' height='64' rx='18' fill='%233c9b80'/%3E%3Cpath d='M19 43h27L39 24a8 8 0 0 0-14 0l-3 6' fill='none' stroke='white' stroke-width='6' stroke-linecap='round'/%3E%3C/svg%3E">
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Material+Symbols+Rounded:FILL@0..1">
   <link rel="stylesheet" href="/styles.css">
 </head>
 <body>
   <div id="lock" class="overlay">
     <form id="login" class="card login">
-      <div class="brand"><div class="logo">☁</div>Saad Drive</div>
+      <div class="brand"><div class="logo"><span class="material-symbols-rounded">cloud</span></div>Saad Drive</div>
       <h1>Welcome Saad</h1>
       <p>Your private workspace is encrypted behind your PIN.</p>
       <label>Access PIN</label>
@@ -34,13 +35,13 @@
 
   <div id="app" class="app hide">
     <aside id="side" class="side">
-      <div class="brand"><div class="logo">☁</div>Saad Drive</div>
+      <div class="brand"><div class="logo"><span class="material-symbols-rounded">cloud</span></div>Saad Drive</div>
       <nav class="nav">
-        <button data-view="home" class="active">⌂ Home</button>
-        <button data-view="myfiles">▣ My files</button>
-        <button data-view="recent">◷ Recent</button>
-        <button data-view="settings">⚙ Settings</button>
-        <button data-view="security">♢ Security</button>
+        <button data-view="home" class="active"><span class="material-symbols-rounded">home</span><span class="nav-label">Home</span></button>
+        <button data-view="myfiles"><span class="material-symbols-rounded">folder</span><span class="nav-label">My files</span></button>
+        <button data-view="recent"><span class="material-symbols-rounded">history</span><span class="nav-label">Recent</span></button>
+        <button data-view="settings"><span class="material-symbols-rounded">settings</span><span class="nav-label">Settings</span></button>
+        <button data-view="security"><span class="material-symbols-rounded">verified_user</span><span class="nav-label">Security</span></button>
       </nav>
       <div class="storage">
         <b>Storage used</b>
@@ -56,10 +57,10 @@
 
     <main class="main">
       <header class="top">
-        <div class="crumb"><button id="menu" class="icon">☰</button> Workspace / <b id="crumb">Home</b></div>
+        <div class="crumb"><button id="menu" class="icon"><span class="material-symbols-rounded">menu</span></button> Workspace / <b id="crumb">Home</b></div>
         <div class="actions">
-          <button id="logout" class="primary">⇥ Log out</button>
-          <button id="upload" class="primary">↑ Upload</button>
+          <button id="logout" class="secondary"><span class="material-symbols-rounded">logout</span>Log out</button>
+          <button id="upload" class="primary"><span class="material-symbols-rounded">upload_file</span>Upload</button>
         </div>
       </header>
 
@@ -88,9 +89,9 @@
                 <option value="date">Date</option>
                 <option value="size">Size</option>
               </select>
-              <button id="list" class="tool">☷</button>
-              <button id="grid" class="tool">▦</button>
-              <button id="more" class="tool">•••</button>
+              <button id="list" class="tool" aria-label="List view"><span class="material-symbols-rounded">view_agenda</span></button>
+              <button id="grid" class="tool" aria-label="Grid view"><span class="material-symbols-rounded">grid_view</span></button>
+              <button id="more" class="tool" aria-label="New folder"><span class="material-symbols-rounded">create_new_folder</span></button>
             </div>
           </div>
 
@@ -98,9 +99,9 @@
 
           <div id="selection" class="tools hide">
             <b id="selectedName"></b>
-            <button id="downloadSelected" class="tool">↓ Download</button>
-            <button id="renameSelected" class="tool">✎ Rename</button>
-            <button id="deleteSelected" class="tool">⌫ Delete</button>
+            <button id="downloadSelected" class="tool"><span class="material-symbols-rounded">download</span>Download</button>
+            <button id="renameSelected" class="tool"><span class="material-symbols-rounded">drive_file_rename_outline</span>Rename</button>
+            <button id="deleteSelected" class="tool"><span class="material-symbols-rounded">delete</span>Delete</button>
           </div>
 
           <div id="table" class="table"><div class="state">Loading...</div></div>
