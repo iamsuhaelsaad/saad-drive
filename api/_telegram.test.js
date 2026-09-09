@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { isIgnorableTelegramDeleteError, parseTelegramUpload } from './_telegram.js';
+import { cleanupTelegramFileReference, isIgnorableTelegramDeleteError, parseTelegramUpload } from './_telegram.js';
 
 test('parseTelegramUpload extracts file and message metadata', () => {
   const payload = {
@@ -59,8 +59,56 @@ test('parseTelegramUpload handles array payload shape', () => {
   });
 });
 
+test('parseTelegramUpload prefers document node and accepts numeric string message id', () => {
+  const payload = {
+    ok: true,
+    result: {
+      message_id: '101',
+      chat: { id: '-100101' },
+      thumb: { file_id: 'thumb-id' },
+      document: { file_id: 'doc-id', file_size: '555' },
+    },
+  };
+
+  assert.deepEqual(parseTelegramUpload(payload), {
+    fileId: 'doc-id',
+    fileSize: 555,
+    messageId: 101,
+    chatId: '-100101',
+  });
+});
+
 test('ignorable delete errors are classified', () => {
   assert.equal(isIgnorableTelegramDeleteError('Bad Request: message to delete not found'), true);
   assert.equal(isIgnorableTelegramDeleteError('Bad Request: message can not be deleted'), true);
   assert.equal(isIgnorableTelegramDeleteError('Forbidden: bot was blocked by the user'), false);
+});
+
+test('cleanupTelegramFileReference skips when only file_id is present', async () => {
+  const result = await cleanupTelegramFileReference({
+    telegram_file_id: 'abc',
+    telegram_message_id: null,
+    telegram_chat_id: '-1001',
+  });
+  assert.equal(result.status, 'skipped');
+  assert.equal(result.ok, true);
+  assert.match(result.reason, /file_id/i);
+});
+
+test('cleanupTelegramFileReference reports failed Telegram delete attempts', async () => {
+  const result = await cleanupTelegramFileReference(
+    {
+      telegram_file_id: 'abc',
+      telegram_message_id: 77,
+      telegram_chat_id: '-1001',
+    },
+    '-1001',
+    async () => ({ ok: false, description: 'network timeout' })
+  );
+
+  assert.deepEqual(result, {
+    status: 'failed',
+    ok: false,
+    reason: 'network timeout',
+  });
 });

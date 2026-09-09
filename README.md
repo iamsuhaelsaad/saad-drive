@@ -22,6 +22,7 @@ Set these in Vercel Project Settings:
 - `MAX_DOWNLOAD_MB` (optional) - download limit in MB (default: `200`)
 - `DOWNLOAD_TIMEOUT_MS` (optional) - Telegram download timeout in ms (default: `30000`)
 - `TELEGRAM_REQUEST_TIMEOUT_MS` (optional) - Telegram API request timeout in ms (default: `20000`)
+- `TELEGRAM_UPLOAD_TIMEOUT_MS` (optional) - Telegram upload timeout in ms for `/api/upload` (default: `60000`)
 - `JWT_REFRESH_GRACE_MS` (optional) - refresh grace window after JWT expiry in ms (default: `86400000`)
 
 ### Generate `APP_PIN_HASH`
@@ -74,6 +75,11 @@ Use the JWT in request `Authorization` headers. The existing UI calls:
 - `409 ... already exists ...` = duplicate name conflict in destination folder.
 - `500 Upload succeeded on Telegram but saving metadata failed.` = Telegram upload completed but database persistence failed.
   - When this happens, the API now attempts compensating cleanup by deleting the uploaded Telegram message.
+
+### Delete + Telegram cleanup behavior
+- `DELETE /api/items?id=<uuid>` now always returns a `telegram_cleanup` summary.
+- Cleanup uses Telegram `deleteMessage` when `telegram_message_id` exists.
+- Telegram Bot API cannot directly delete stored file blobs by `telegram_file_id` alone; such rows are returned as `skipped` with a reason.
 
 ## UI behavior
 The frontend keeps the same API contract and storage model, with a Google Drive-inspired layout polish:
