@@ -1,9 +1,18 @@
-# Saad Drive live build
+# Saad Drive Telegram backend pass
 
-This build keeps the original dashboard look and connects the PIN screen to the server-side auth route.
+Adds authenticated Telegram upload and download routes to the Vercel project.
 
-Deploy: import into Vercel, set the four environment variables, then redeploy.
-Generate the hash for demo PIN 246810:
-node -e "console.log(require('crypto').createHash('sha256').update('246810').digest('hex'))"
+## Routes
+- `POST /api/auth`: returns a 2-hour JWT after validating `APP_PIN_HASH`.
+- `POST /api/upload`: multipart upload, max size from `MAX_UPLOAD_MB`, sends the file to Telegram, returns `file_id`.
+- `GET /api/download?file_id=...`: authenticated Telegram proxy download.
+- `GET /api/files`: protected placeholder until a metadata database is connected.
 
-Important: this is the safe auth/dashboard pass. Telegram upload/download and persistent folder metadata are the next backend pass, not faked in the UI.
+## Frontend wiring
+Use `Authorization: Bearer ${sessionStorage.getItem('token')}`. Upload with `FormData` field `file`, then save the returned `file.id` with the file name. Download through `/api/download?file_id=...` with the same auth header.
+
+## Deploy
+Merge these `api` files into the deployed project, confirm all five Vercel environment variables are set for Production, then redeploy. Do not place the bot token in frontend JavaScript.
+
+## Important
+Telegram stores the binary, but it is not a folder database. The next pass must add a persistent metadata store, such as Vercel Postgres, Neon, Supabase, or another database, for folders, search, rename, delete, and reliable listing.
