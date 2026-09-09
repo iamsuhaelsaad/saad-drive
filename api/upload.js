@@ -87,6 +87,37 @@ async function validateParent(parentId) {
   return result.rows[0].id;
 }
 
+async function hasDuplicateName(name, parentId) {
+  const result = parentId
+    ? await sql`
+        SELECT 1
+        FROM drive_items
+        WHERE parent_id = ${parentId}
+          AND lower(name) = lower(${name})
+        LIMIT 1
+      `
+    : await sql`
+        SELECT 1
+        FROM drive_items
+        WHERE parent_id IS NULL
+          AND lower(name) = lower(${name})
+        LIMIT 1
+      `;
+  return Boolean(result.rowCount);
+}
+
+function readTelegramDocument(payload) {
+  return payload?.result?.document || payload?.result?.message?.document || null;
+}
+
+async function readTelegramPayload(response) {
+  try {
+    return await response.json();
+  } catch {
+    return null;
+  }
+}
+
 export default async function handler(req, res) {
   if (req.method !== 'POST') return json(res, 405, { error: 'Method not allowed' });
   if (!auth(req, res)) return;
@@ -105,33 +136,65 @@ export default async function handler(req, res) {
     const { file, parentId } = await parseMultipart(req);
     const validParentId = await validateParent(parentId);
 
+    if (await hasDuplicateName(file.name, validParentId)) {
+      return json(res, 409, {
+        error: 'A file with this name already exists in the destination folder',
+        source: 'database',
+      });
+    }
+
     const form = new FormData();
     form.append('chat_id', process.env.TELEGRAM_CHAT_ID);
     form.append('caption', `Saad Drive | ${file.name}`);
     form.append('document', new Blob([file.buffer], { type: file.type }), file.name);
 
     const telegramResponse = await fetch(tg('sendDocument'), { method: 'POST', body: form });
-    const telegram = await telegramResponse.json();
+    const telegram = await readTelegramPayload(telegramResponse);
+    const telegramDocument = readTelegramDocument(telegram);
 
-    if (!telegramResponse.ok || !telegram.ok || !telegram?.result?.document?.file_id) {
+    if (!telegramResponse.ok || !telegram?.ok) {
       return json(res, 502, {
         error: 'Telegram rejected the upload.',
         detail: telegram?.description || 'Unknown Telegram error.',
+        source: 'telegram',
       });
     }
 
-    const document = telegram.result.document;
+    if (!telegramDocument?.file_id) {
+      return json(res, 502, {
+        error: 'Telegram response was incomplete after upload.',
+        detail: 'Missing Telegram file identifier in upload response.',
+        source: 'telegram',
+      });
+    }
 
-    const result = await sql`
-      INSERT INTO drive_items(name, kind, parent_id, telegram_file_id, mime_type, size_bytes)
-      VALUES(${file.name}, 'file', ${validParentId}, ${document.file_id}, ${file.type}, ${document.file_size || file.size})
-      RETURNING *
-    `;
+    let result;
+    try {
+      result = await sql`
+        INSERT INTO drive_items(name, kind, parent_id, telegram_file_id, mime_type, size_bytes)
+        VALUES(${file.name}, 'file', ${validParentId}, ${telegramDocument.file_id}, ${file.type}, ${telegramDocument.file_size || file.size})
+        RETURNING *
+      `;
+    } catch (error) {
+      if (error?.code === '23505') {
+        return json(res, 409, {
+          error: 'Upload reached Telegram, but this folder already has a file with the same name.',
+          source: 'database',
+        });
+      }
+      throw Object.assign(new Error('Upload succeeded on Telegram but saving metadata failed.'), {
+        status: 500,
+        source: 'database',
+      });
+    }
 
     return json(res, 201, { item: result.rows[0] });
   } catch (error) {
     if (error?.status) {
-      return json(res, error.status, { error: error.message });
+      return json(res, error.status, {
+        error: error.message,
+        ...(error.source ? { source: error.source } : {}),
+      });
     }
 
     if (error?.code === '23505') {

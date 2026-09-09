@@ -85,15 +85,18 @@ button { cursor: pointer; }
 .head { margin-bottom: 10px; }
 .head h2 { margin: 0; font: 600 19px 'Space Grotesk'; }
 .table { overflow: hidden; }
-.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); cursor: pointer; transition: background-color .15s ease, box-shadow .15s ease; }
+.row { display: flex; justify-content: space-between; align-items: center; gap: 12px; padding: 14px 16px; border-bottom: 1px solid var(--line); cursor: pointer; transition: background-color .15s ease, box-shadow .15s ease, transform .12s ease; }
 .row:last-child { border-bottom: 0; }
 .row:hover, .row.selected { background: oklch(93% .04 250); }
+.row:hover { transform: translateY(-1px); }
 .row.selected { box-shadow: inset 3px 0 0 oklch(58% .2 258); }
 .item { display: flex; align-items: center; gap: 11px; min-width: 0; }
 .item b { display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .item small { display: block; color: var(--muted); margin-top: 3px; font-size: 11px; }
 .fileicon { width: 38px; height: 38px; display: grid; place-items: center; border-radius: 10px; background: var(--mint); color: var(--deep); flex: 0 0 auto; border: 1px solid oklch(86% .04 250); }
 .fileicon.folder { color: oklch(62% .16 85); background: oklch(95% .07 85); border-color: oklch(87% .08 85); }
+.row:hover .fileicon { transform: translateY(-1px) scale(1.02); }
+.fileicon { transition: transform .12s ease, box-shadow .15s ease; }
 .row-actions .material-symbols-rounded { font-size: 17px; }
 .row-actions { display: flex; gap: 3px; }
 .row-actions button { border: 0; background: transparent; color: var(--muted); padding: 7px; border-radius: 8px; opacity: .7; transition: background-color .15s ease, opacity .15s ease, color .15s ease; }
@@ -102,6 +105,7 @@ button { cursor: pointer; }
 .drop { margin-top: 16px; padding: 21px; border: 1px dashed var(--teal); border-radius: 15px; text-align: center; color: var(--muted); cursor: pointer; transition: .2s ease; background: color-mix(in oklch, var(--surface) 84%, white 16%); }
 .drop b { display: block; color: var(--ink); margin-bottom: 3px; }
 .drop.dragging { background: var(--mint); border-style: solid; }
+.drop.dragging .material-symbols-rounded { animation: pop .2s ease; }
 .panel { padding: 18px; }
 .panel h3 { margin: 0 0 15px; font: 600 16px 'Space Grotesk'; }
 .panel p { font-size: 12px; line-height: 1.4; }
@@ -121,7 +125,7 @@ button { cursor: pointer; }
 .profile-card img { width: 76px; height: 76px; border-radius: 50%; object-fit: cover; }
 .links { display: flex; gap: 7px; flex-wrap: wrap; margin-top: 12px; }
 .links a { padding: 6px 8px; border-radius: 8px; background: var(--mint); color: var(--deep); font-size: 12px; text-decoration: none; }
-.toast { position: fixed; right: 18px; bottom: 18px; z-index: 90; max-width: min(340px, calc(100% - 32px)); padding: 12px 14px; border-radius: 12px; background: var(--ink); color: var(--surface); box-shadow: 0 12px 30px oklch(20% .03 165/.25); }
+.toast { position: fixed; right: 18px; bottom: 18px; z-index: 90; max-width: min(340px, calc(100% - 32px)); padding: 12px 14px; border-radius: 12px; background: var(--ink); color: var(--surface); box-shadow: 0 12px 30px oklch(20% .03 165/.25); animation: pop .16s ease; }
 .table.grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(240px, 1fr)); gap: 12px; border: 0; background: transparent; }
 .table.grid .row { min-height: 140px; align-items: flex-start; flex-direction: column; border: 1px solid var(--line); border-radius: 16px; background: var(--surface); }
 .table.grid .item { width: 100%; }

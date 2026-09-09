@@ -57,7 +57,9 @@
     }
 
     if (!response.ok) {
-      throw new Error(payload.error || 'Request failed');
+      const source = payload.source ? `${payload.source}: ` : '';
+      const detail = payload.detail ? ` ${payload.detail}` : '';
+      throw new Error(`${source}${payload.error || 'Request failed'}${detail}`.trim());
     }
 
     return payload;
@@ -490,7 +492,9 @@
         if (request.status >= 200 && request.status < 300) {
           resolve(payload);
         } else {
-          reject(new Error(payload.error || 'Upload failed'));
+          const source = payload.source ? `${payload.source}: ` : '';
+          const detail = payload.detail ? ` ${payload.detail}` : '';
+          reject(new Error(`${source}${payload.error || 'Upload failed'}${detail}`.trim()));
         }
       };
 
@@ -523,6 +527,8 @@
     if (uploaded) {
       toast(uploaded === queue.length ? 'Uploaded' : `Uploaded ${uploaded}/${queue.length}`);
       refresh();
+    } else {
+      toast('No files were uploaded');
     }
   }
 
