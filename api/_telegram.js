@@ -22,29 +22,31 @@ export async function readTelegramPayload(response) {
 }
 
 export function parseTelegramUpload(payload) {
-  const message = payload?.result && typeof payload.result === 'object' ? payload.result : null;
-  const queue = [message];
+  const root = payload?.result && typeof payload.result === 'object' ? payload.result : null;
+  const queue = [{ node: root, message: null }];
   const visited = new Set();
 
   while (queue.length) {
-    const node = queue.shift();
+    const { node, message } = queue.shift();
     if (!node || typeof node !== 'object' || visited.has(node)) continue;
     visited.add(node);
+
+    const messageNode = (Number.isInteger(node.message_id) || node?.chat?.id !== undefined) ? node : message;
     if (typeof node.file_id === 'string' && node.file_id.trim()) {
       return {
         fileId: node.file_id.trim(),
         fileSize: Number.isFinite(node.file_size) ? Number(node.file_size) : undefined,
-        messageId: Number.isInteger(message?.message_id) ? message.message_id : null,
-        chatId: message?.chat?.id !== undefined && message?.chat?.id !== null ? String(message.chat.id) : null,
+        messageId: Number.isInteger(messageNode?.message_id) ? messageNode.message_id : null,
+        chatId: messageNode?.chat?.id !== undefined && messageNode?.chat?.id !== null ? String(messageNode.chat.id) : null,
       };
     }
 
     for (const value of Object.values(node)) {
       if (!value || typeof value !== 'object') continue;
       if (Array.isArray(value)) {
-        for (const item of value) queue.push(item);
+        for (const item of value) queue.push({ node: item, message: messageNode });
       } else {
-        queue.push(value);
+        queue.push({ node: value, message: messageNode });
       }
     }
   }
