@@ -1,7 +1,6 @@
 import crypto from 'node:crypto';
-import { openAsBlob } from 'node:fs';
 import { createWriteStream } from 'node:fs';
-import { mkdir, rm } from 'node:fs/promises';
+import { mkdir, readFile, rm } from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
 import Busboy from 'busboy';
@@ -118,6 +117,18 @@ async function cleanupLocalFile(filePath) {
   }
 }
 
+async function toTelegramUploadBlob(file) {
+  try {
+    const bytes = await readFile(file.path);
+    return new Blob([bytes], { type: file.type });
+  } catch {
+    throw Object.assign(new Error('Could not prepare the uploaded file for Telegram transfer.'), {
+      status: 500,
+      source: 'server',
+    });
+  }
+}
+
 async function validateParent(parentId) {
   if (!parentId) return null;
   if (!isUuid(parentId)) throw Object.assign(new Error('parent_id must be a valid UUID'), { status: 400 });
@@ -187,16 +198,19 @@ export default async function handler(req, res) {
     const form = new FormData();
     form.append('chat_id', process.env.TELEGRAM_CHAT_ID);
     form.append('caption', `Saad Drive | ${file.name}`);
-    form.append('document', await openAsBlob(file.path, { type: file.type }), file.name);
+    form.append('document', await toTelegramUploadBlob(file), file.name);
 
     const telegramResponse = await fetchTelegram('sendDocument', form);
     const telegram = await readTelegramPayload(telegramResponse);
     const telegramDocument = parseTelegramUpload(telegram);
 
     if (!telegramResponse.ok || !telegram?.ok) {
+      const fallbackDetail = telegramResponse.status
+        ? `Telegram HTTP ${telegramResponse.status}${telegramResponse.statusText ? ` ${telegramResponse.statusText}` : ''}.`
+        : 'Unknown Telegram error.';
       return json(res, 502, {
         error: 'Telegram rejected the upload.',
-        detail: telegram?.description || 'Unknown Telegram error.',
+        detail: telegram?.description || fallbackDetail,
         source: 'telegram',
       });
     }
@@ -258,6 +272,13 @@ export default async function handler(req, res) {
   } catch (error) {
     if (error?.name === 'AbortError') {
       return json(res, 504, { error: 'Telegram request timed out.', source: 'telegram' });
+    }
+    if (error instanceof TypeError) {
+      return json(res, 502, {
+        error: 'Could not reach Telegram API.',
+        detail: error.message || 'Network request failed.',
+        source: 'telegram',
+      });
     }
     if (error?.status) {
       return json(res, error.status, {
