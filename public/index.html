@@ -1,5 +1,5 @@
 <!doctype html>
-<html lang="en">
+<html lang="en" data-theme="">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
@@ -12,9 +12,9 @@
     <form id="login" class="card login">
       <div class="brand"><div class="logo">☁</div>Saad Drive</div>
       <h1>Welcome Saad</h1>
-      <p>Your private workspace is ready.</p>
+      <p>Your private workspace is encrypted behind your PIN.</p>
       <label>Access PIN</label>
-      <input id="pin" class="pin" inputmode="numeric" type="password">
+      <input id="pin" class="pin" inputmode="numeric" type="password" autocomplete="current-password" maxlength="12">
       <div id="error" class="error"></div>
       <button id="unlock" class="primary" type="submit">Unlock workspace →</button>
     </form>
@@ -44,7 +44,7 @@
       </nav>
       <div class="storage">
         <b>Storage used</b>
-        <span class="storage-cap">Unlimited</span>
+        <span class="storage-cap">Telegram-backed</span>
         <div class="bar"><i id="bar"></i></div>
         <small id="storage">0 B used</small>
       </div>
@@ -68,13 +68,13 @@
           <h1 id="title">Home</h1>
           <p id="subtitle">Your folders and files, all in one place.</p>
         </div>
-        <input id="search" class="search" placeholder="Search">
+        <input id="search" class="search" placeholder="Search files or folders" aria-label="Search files or folders">
       </section>
 
       <section class="kpis">
-        <div class="kpi"><small>Files</small><strong id="filesCount">0</strong><small>Live database</small></div>
+        <div class="kpi"><small>Files</small><strong id="filesCount">0</strong><small>Synced in real time</small></div>
         <div class="kpi"><small>Folders</small><strong id="foldersCount">0</strong><small>Nested supported</small></div>
-        <div class="kpi"><small>Used</small><strong id="used">0 B</strong><small>Unlimited capacity</small></div>
+        <div class="kpi"><small>Used</small><strong id="used">0 B</strong><small>Telegram-backed storage</small></div>
         <div class="kpi"><small>View</small><strong id="view">List</strong><small>Switch below</small></div>
       </section>
 

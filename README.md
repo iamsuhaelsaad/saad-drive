@@ -1,17 +1,61 @@
-# Saad Drive database pass
+# Saad Drive
 
-Adds persistent folders and file metadata with Vercel Postgres, while keeping Telegram as binary storage.
+Private cloud-drive style app for personal use. Metadata is stored in Vercel Postgres and file binaries are stored in Telegram.
 
-## New routes
-- `GET /api/items?parent_id=` list folders/files
-- `POST /api/items` create `{name,kind:"folder",parent_id:null}`
-- `PATCH /api/items` rename/move `{id,name,parent_id}`
-- `DELETE /api/items?id=` delete a folder or file record
-- `POST /api/upload` multipart field `file`, optional `parent_id`; uploads to Telegram and persists metadata
-- `GET /api/download?id=` authenticated download by metadata id
+## Features
+- PIN login (`/api/auth`) that returns JWT
+- Folder/file metadata tree (`/api/items`)
+- Multipart upload to Telegram (`/api/upload`)
+- Authenticated download proxy (`/api/download`)
+- Storage stats (`/api/stats`) and health check (`/api/health`)
+
+## Required environment variables
+Set these in Vercel Project Settings:
+
+- `JWT_SECRET` - long random secret used to sign JWT
+- `APP_PIN_HASH` - SHA-256 hash of your numeric PIN
+- `POSTGRES_URL` - provided by Vercel Postgres integration
+- `TELEGRAM_BOT_TOKEN` - Telegram bot token
+- `TELEGRAM_CHAT_ID` - target chat/channel ID for storage
+- `MAX_UPLOAD_MB` (optional) - upload limit in MB (default: `20`)
+
+### Generate `APP_PIN_HASH`
+```bash
+node -e "console.log(require('crypto').createHash('sha256').update('1234').digest('hex'))"
+```
+Replace `1234` with your PIN.
+
+## Database setup
+For a fresh database, run `schema.sql` once:
+
+```sql
+-- run contents of schema.sql
+```
+
+The API also auto-initializes the schema on first authenticated request (idempotent and safe for existing data).
+
+## API routes
+All routes except `/api/auth` and `/api/health` require `Authorization: ******
+
+- `POST /api/auth` body: `{ "pin": "1234" }`
+- `GET /api/items?parent_id=<uuid>`
+- `GET /api/items?all=1`
+- `POST /api/items` body: `{ "name": "Docs", "kind": "folder", "parent_id": null }`
+- `PATCH /api/items` body: `{ "id": "<uuid>", "name": "New Name" }` or `{ "id": "<uuid>", "parent_id": "<folder_uuid>" }`
+- `DELETE /api/items?id=<uuid>`
+- `POST /api/items` body: `{ "action": "copy", "id": "<uuid>", "parent_id": "<folder_uuid|null>" }`
+- `POST /api/upload` multipart field `file`, optional `parent_id`
+- `GET /api/download?id=<uuid>`
+- `GET /api/files?parent_id=<uuid>` (compat listing endpoint)
+- `GET /api/stats`
+- `GET /api/health`
 
 ## Deploy
-Add a Vercel Postgres/Neon storage integration so `POSTGRES_URL` exists, run `schema.sql` once if desired, add the Telegram/auth variables, merge the `api` folder, then redeploy. The API also creates the table/index on first authenticated request.
+1. Import repo into Vercel.
+2. Add Vercel Postgres integration.
+3. Configure environment variables above.
+4. Deploy.
 
-## Frontend wiring
-Use the JWT in `Authorization: Bearer ...`. The existing UI needs to call `/api/items` to replace demo rows, send uploads to `/api/upload`, and download from `/api/download?id=...`.
+## Frontend
+`public/index.html` + `public/app.js` is the single-page UI.
+It supports login, browse, upload, download, rename, move/copy, delete, and stats display using the API routes above.

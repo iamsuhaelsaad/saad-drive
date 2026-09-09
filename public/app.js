@@ -115,8 +115,9 @@
     $('#filesCount').textContent = files.length;
     $('#foldersCount').textContent = folders.length;
     $('#used').textContent = human(used);
-    $('#storage').textContent = `${human(used)} used · unlimited`;
-    $('#bar').style.width = used ? '3%' : '0%';
+    $('#storage').textContent = `${human(used)} used · telegram-backed`;
+    $('#bar').style.width = files.length ? '6%' : '0%';
+    
   }
 
   function getVisibleItems() {
@@ -377,6 +378,11 @@
     updateSelectionVisibility();
     updateNavState();
     $('#title').textContent = view === 'recent' ? 'Recent files' : view[0].toUpperCase() + view.slice(1);
+    $('#subtitle').textContent = view === 'security'
+      ? 'Security settings and protection details.'
+      : view === 'settings'
+        ? 'Customize your Saad Drive workspace.'
+        : 'Your folders and files, all in one place.';
 
     if (view === 'settings') {
       openSettings();
