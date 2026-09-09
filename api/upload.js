@@ -31,8 +31,8 @@ function parseMultipart(req) {
       }
     });
 
-    parser.on('file', (field, stream, info) => {
-      if (field !== 'file' || file) {
+    parser.on('file', (_field, stream, info) => {
+      if (file) {
         stream.resume();
         return;
       }
@@ -87,7 +87,7 @@ function parseMultipart(req) {
         return;
       }
       if (!file?.buffer?.length) {
-        reject(Object.assign(new Error('No file supplied. Upload using multipart field name "file".'), { status: 400, source: 'client' }));
+        reject(Object.assign(new Error('No file supplied in multipart upload body.'), { status: 400, source: 'client' }));
         return;
       }
       resolve({ file, parentId });
@@ -127,7 +127,40 @@ async function hasDuplicateName(name, parentId) {
 }
 
 function readTelegramDocument(payload) {
-  return payload?.result?.document || payload?.result?.message?.document || null;
+  const queue = [payload?.result];
+  const visited = new Set();
+
+  while (queue.length) {
+    const node = queue.shift();
+    if (!node || typeof node !== 'object') continue;
+    if (visited.has(node)) continue;
+    visited.add(node);
+
+    if (typeof node.file_id === 'string' && node.file_id.trim()) {
+      return {
+        file_id: node.file_id.trim(),
+        file_size: Number.isFinite(node.file_size) ? node.file_size : undefined,
+      };
+    }
+
+    for (const value of Object.values(node)) {
+      if (!value || typeof value !== 'object') continue;
+      if (Array.isArray(value)) {
+        for (const item of value) queue.push(item);
+      } else {
+        queue.push(value);
+      }
+    }
+  }
+
+  return null;
+}
+
+function describeTelegramResult(payload) {
+  const result = payload?.result;
+  if (!result || typeof result !== 'object') return 'Telegram returned no result object.';
+  const keys = Object.keys(result).slice(0, 8);
+  return keys.length ? `Telegram result keys: ${keys.join(', ')}` : 'Telegram result object was empty.';
 }
 
 async function readTelegramPayload(response) {
@@ -183,7 +216,7 @@ export default async function handler(req, res) {
     if (!telegramDocument?.file_id) {
       return json(res, 502, {
         error: 'Telegram response was incomplete after upload.',
-        detail: 'Missing Telegram file identifier in upload response.',
+        detail: `Missing Telegram file identifier in upload response. ${describeTelegramResult(telegram)}`,
         source: 'telegram',
       });
     }
@@ -192,7 +225,7 @@ export default async function handler(req, res) {
     try {
       result = await sql`
         INSERT INTO drive_items(name, kind, parent_id, telegram_file_id, mime_type, size_bytes)
-        VALUES(${file.name}, 'file', ${validParentId}, ${telegramDocument.file_id}, ${file.type}, ${telegramDocument.file_size || file.size})
+        VALUES(${file.name}, 'file', ${validParentId}, ${telegramDocument.file_id}, ${file.type}, ${telegramDocument.file_size ?? file.size})
         RETURNING *
       `;
     } catch (error) {
