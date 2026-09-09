@@ -507,6 +507,10 @@
     const queue = Array.from(files || []);
     if (!queue.length) return;
 
+    const uploadButton = $('#upload');
+    const drop = $('#drop');
+    uploadButton.disabled = true;
+    drop.classList.add('busy');
     $('#uploadState').classList.remove('hide');
     $('#uploadBar').style.width = '0%';
 
@@ -523,12 +527,12 @@
 
     $('#fileInput').value = '';
     $('#uploadState').classList.add('hide');
+    uploadButton.disabled = false;
+    drop.classList.remove('busy');
 
     if (uploaded) {
       toast(uploaded === queue.length ? 'Uploaded' : `Uploaded ${uploaded}/${queue.length}`);
       refresh();
-    } else {
-      toast('No files were uploaded');
     }
   }
 

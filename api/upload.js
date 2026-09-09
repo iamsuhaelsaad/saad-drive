@@ -14,12 +14,13 @@ function parseMultipart(req) {
     let tooBig = false;
     let parentId = null;
     let file = null;
+    let fileRead = Promise.resolve();
 
     let parser;
     try {
       parser = Busboy({ headers: req.headers, limits: { files: 1, fileSize: MAX, fields: 10 } });
     } catch {
-      reject(Object.assign(new Error('Invalid multipart upload'), { status: 400 }));
+      reject(Object.assign(new Error('Invalid multipart upload'), { status: 400, source: 'client' }));
       return;
     }
 
@@ -30,7 +31,12 @@ function parseMultipart(req) {
       }
     });
 
-    parser.on('file', (_field, stream, info) => {
+    parser.on('file', (field, stream, info) => {
+      if (field !== 'file') {
+        stream.resume();
+        return;
+      }
+
       const chunks = [];
       let size = 0;
 
@@ -39,35 +45,49 @@ function parseMultipart(req) {
         type: info.mimeType || 'application/octet-stream',
       };
 
-      stream.on('data', chunk => {
-        size += chunk.length;
-        if (size <= MAX) chunks.push(chunk);
-      });
+      fileRead = new Promise((resolveFile, rejectFile) => {
+        stream.on('data', chunk => {
+          size += chunk.length;
+          if (size <= MAX) chunks.push(chunk);
+        });
 
-      stream.on('limit', () => {
-        tooBig = true;
-      });
+        stream.on('limit', () => {
+          tooBig = true;
+        });
 
-      stream.on('end', () => {
-        if (!file) return;
-        file.buffer = Buffer.concat(chunks);
-        file.size = size;
+        stream.on('error', () => rejectFile(Object.assign(new Error('Could not read upload stream'), { status: 400, source: 'client' })));
+
+        stream.on('end', () => {
+          if (!file) {
+            resolveFile();
+            return;
+          }
+          file.buffer = Buffer.concat(chunks);
+          file.size = size;
+          resolveFile();
+        });
       });
     });
 
     parser.once('error', () => {
-      reject(Object.assign(new Error('Could not read upload'), { status: 400 }));
+      reject(Object.assign(new Error('Could not read upload'), { status: 400, source: 'client' }));
     });
 
-    parser.once('finish', () => {
+    parser.once('finish', async () => {
       if (parsed) return;
       parsed = true;
+      try {
+        await fileRead;
+      } catch (error) {
+        reject(error);
+        return;
+      }
       if (tooBig) {
-        reject(Object.assign(new Error(`File exceeds the ${MAX_MB} MB limit.`), { status: 413 }));
+        reject(Object.assign(new Error(`File exceeds the ${MAX_MB} MB limit.`), { status: 413, source: 'client' }));
         return;
       }
       if (!file?.buffer?.length) {
-        reject(Object.assign(new Error('No file supplied. Choose a file first.'), { status: 400 }));
+        reject(Object.assign(new Error('No file supplied. Upload using multipart field name "file".'), { status: 400, source: 'client' }));
         return;
       }
       resolve({ file, parentId });
@@ -127,7 +147,7 @@ export default async function handler(req, res) {
   }
 
   if (!String(req.headers['content-type'] || '').toLowerCase().startsWith('multipart/form-data')) {
-    return json(res, 400, { error: 'Content-Type must be multipart/form-data' });
+    return json(res, 400, { error: 'Content-Type must be multipart/form-data', source: 'client' });
   }
 
   try {
