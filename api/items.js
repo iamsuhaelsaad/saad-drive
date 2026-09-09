@@ -16,6 +16,10 @@ export default async function handler(req, res) {
   try {
     await ensureDb();
     if (req.method === 'GET') {
+      if (req.query.all === '1') {
+        const result = await sql`SELECT id,name,kind,parent_id,telegram_file_id,mime_type,size_bytes,created_at,updated_at FROM drive_items ORDER BY kind DESC, lower(name)`;
+        return json(res, 200, { items: result.rows, parentId: null });
+      }
       const parent = req.query.parent_id || null;
       const result = parent
         ? await sql`SELECT id,name,kind,parent_id,telegram_file_id,mime_type,size_bytes,created_at,updated_at FROM drive_items WHERE parent_id=${parent} ORDER BY kind DESC, lower(name)`
