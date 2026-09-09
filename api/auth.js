@@ -1,43 +1,94 @@
 import jwt from 'jsonwebtoken';
 import { hashPin, json, readJsonBody } from './_security.js';
+import { ensureDb, withDbTransaction } from './_db.js';
+import { computeRateLimitState, isCurrentlyLocked } from './_pin_rate_limit.js';
 
 const WINDOW_MS = 15 * 60 * 1000;
 const LOCK_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 8;
-const attempts = new Map();
 
 function clientKey(req) {
-  const forwarded = String(req.headers['x-forwarded-for'] || '').split(',')[0].trim();
-  return forwarded || req.socket?.remoteAddress || 'unknown';
+  const remoteAddress = String(req.socket?.remoteAddress || 'unknown');
+  const userAgent = String(req.headers['user-agent'] || '');
+  return hashPin(`${remoteAddress}|${userAgent}`);
 }
 
-function now() {
+function nowMs() {
   return Date.now();
 }
 
-function getState(key) {
-  const value = attempts.get(key);
-  if (!value) return { count: 0, start: now(), lockUntil: 0 };
-
-  if (value.lockUntil && value.lockUntil <= now()) {
-    attempts.delete(key);
-    return { count: 0, start: now(), lockUntil: 0 };
-  }
-
-  if (now() - value.start > WINDOW_MS) {
-    return { count: 0, start: now(), lockUntil: 0 };
-  }
-
-  return value;
+function toMs(value) {
+  if (!value) return 0;
+  const ts = new Date(value).getTime();
+  return Number.isFinite(ts) ? ts : 0;
 }
 
-function recordFailure(key) {
-  const state = getState(key);
-  const count = state.count + 1;
-  const lockUntil = count >= MAX_ATTEMPTS ? now() + LOCK_MS : 0;
-  const next = { count, start: state.start, lockUntil };
-  attempts.set(key, next);
-  return next;
+async function getRateState(keyHash) {
+  const result = await withDbTransaction(async client => {
+    const rowResult = await client.sql`
+      SELECT attempts, window_started_at, lock_until
+      FROM pin_auth_attempts
+      WHERE key_hash = ${keyHash}
+      FOR UPDATE
+    `;
+    if (!rowResult.rowCount) return { attempts: 0, windowStartedAtMs: nowMs(), lockUntilMs: 0 };
+    const row = rowResult.rows[0];
+    return {
+      attempts: Number(row.attempts || 0),
+      windowStartedAtMs: toMs(row.window_started_at),
+      lockUntilMs: toMs(row.lock_until),
+    };
+  });
+  return result;
+}
+
+async function clearRateState(keyHash) {
+  await withDbTransaction(async client => {
+    await client.sql`DELETE FROM pin_auth_attempts WHERE key_hash = ${keyHash}`;
+  });
+}
+
+async function recordFailure(keyHash) {
+  const now = nowMs();
+  return withDbTransaction(async client => {
+    const rowResult = await client.sql`
+      SELECT attempts, window_started_at, lock_until
+      FROM pin_auth_attempts
+      WHERE key_hash = ${keyHash}
+      FOR UPDATE
+    `;
+    const previousState = rowResult.rowCount
+      ? {
+          attempts: Number(rowResult.rows[0].attempts || 0),
+          windowStartedAtMs: toMs(rowResult.rows[0].window_started_at),
+          lockUntilMs: toMs(rowResult.rows[0].lock_until),
+        }
+      : null;
+
+    const next = computeRateLimitState(previousState, now, {
+      windowMs: WINDOW_MS,
+      lockMs: LOCK_MS,
+      maxAttempts: MAX_ATTEMPTS,
+    });
+
+    await client.sql`
+      INSERT INTO pin_auth_attempts(key_hash, attempts, window_started_at, lock_until, updated_at)
+      VALUES(
+        ${keyHash},
+        ${next.attempts},
+        ${new Date(next.windowStartedAtMs).toISOString()},
+        ${next.lockUntilMs ? new Date(next.lockUntilMs).toISOString() : null},
+        now()
+      )
+      ON CONFLICT (key_hash)
+      DO UPDATE SET
+        attempts = EXCLUDED.attempts,
+        window_started_at = EXCLUDED.window_started_at,
+        lock_until = EXCLUDED.lock_until,
+        updated_at = now()
+    `;
+    return next;
+  });
 }
 
 export default async function handler(req, res) {
@@ -47,25 +98,29 @@ export default async function handler(req, res) {
     return json(res, 503, { error: 'Authentication is not configured.' });
   }
 
-  const key = clientKey(req);
-  const state = getState(key);
-
-  if (state.lockUntil && state.lockUntil > now()) {
-    return json(res, 429, { error: 'Too many attempts. Try again later.' });
-  }
-
   try {
+    await ensureDb();
+    const key = clientKey(req);
+    const state = await getRateState(key);
+    const now = nowMs();
+
+    if (isCurrentlyLocked(state, now)) {
+      const retryAfter = Math.ceil((state.lockUntilMs - now) / 1000);
+      if (retryAfter > 0) res.setHeader('Retry-After', String(retryAfter));
+      return json(res, 429, { error: 'Too many attempts. Try again later.' });
+    }
+
     const body = await readJsonBody(req, 8 * 1024);
     const pin = String(body.pin ?? '').trim();
 
     if (!pin || hashPin(pin) !== process.env.APP_PIN_HASH) {
-      const failed = recordFailure(key);
-      const retryAfter = failed.lockUntil ? Math.ceil((failed.lockUntil - now()) / 1000) : 0;
+      const failed = await recordFailure(key);
+      const retryAfter = failed.lockUntilMs ? Math.ceil((failed.lockUntilMs - nowMs()) / 1000) : 0;
       if (retryAfter > 0) res.setHeader('Retry-After', String(retryAfter));
       return json(res, 401, { error: 'Invalid PIN' });
     }
 
-    attempts.delete(key);
+    await clearRateState(key);
 
     return json(res, 200, {
       token: jwt.sign({ scope: 'drive' }, process.env.JWT_SECRET, { expiresIn: '2h' }),
