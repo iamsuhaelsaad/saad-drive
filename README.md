@@ -15,3 +15,9 @@ Add a Vercel Postgres/Neon storage integration so `POSTGRES_URL` exists, run `sc
 
 ## Frontend wiring
 Use the JWT in `Authorization: Bearer ...`. The existing UI needs to call `/api/items` to replace demo rows, send uploads to `/api/upload`, and download from `/api/download?id=...`.
+
+## UI behavior
+The frontend keeps the same API contract and storage model, with a Google Drive-inspired layout polish:
+- richer file/folder/action icons
+- smoother hover/focus/selection/opening transitions
+- improved loading/empty/error presentation in the file list

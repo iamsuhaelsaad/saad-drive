@@ -80,6 +80,17 @@
     return `${(value / Math.pow(1024, index)).toFixed(index ? 1 : 0)} ${units[index]}`;
   }
 
+  function iconForItem(item) {
+    if (item.kind === 'folder') return 'folder';
+    const name = String(item.name || '').toLowerCase();
+    if (/\.(png|jpg|jpeg|webp|gif|svg)$/.test(name)) return 'image';
+    if (/\.(mp4|mkv|mov|avi|webm)$/.test(name)) return 'movie';
+    if (/\.(mp3|wav|ogg|m4a|flac)$/.test(name)) return 'music_note';
+    if (/\.(zip|rar|7z|tar|gz)$/.test(name)) return 'folder_zip';
+    if (/\.(pdf)$/.test(name)) return 'picture_as_pdf';
+    return 'description';
+  }
+
   function size(folderId) {
     return state.all
       .filter(item => item.kind === 'file' && item.parent_id === folderId)
@@ -105,6 +116,10 @@
   function setTableMode() {
     $('#table').classList.toggle('grid', state.mode === 'grid');
     $('#view').textContent = state.mode === 'grid' ? 'Grid' : 'List';
+    $('#list').classList.toggle('active', state.mode === 'list');
+    $('#grid').classList.toggle('active', state.mode === 'grid');
+    $('#list').setAttribute('aria-pressed', String(state.mode === 'list'));
+    $('#grid').setAttribute('aria-pressed', String(state.mode === 'grid'));
   }
 
   function updateStats() {
@@ -155,25 +170,31 @@
     const table = $('#table');
 
     if (!list.length) {
-      table.innerHTML = '<div class="state">No matching files or folders.</div>';
+      table.innerHTML = `
+        <div class="state">
+          <span class="material-symbols-rounded state-icon">folder_open</span>
+          <b>Nothing here yet</b>
+          <small>No matching files or folders.</small>
+        </div>
+      `;
     } else {
       table.innerHTML = list.map(item => {
         const itemSize = item.kind === 'folder' ? size(item.id) : item.size_bytes;
-        const icon = item.kind === 'folder' ? '▰' : item.name.toLowerCase().endsWith('.pdf') ? 'PDF' : '▤';
+        const icon = iconForItem(item);
         const selectedClass = state.selected === item.id ? 'selected' : '';
 
         return `
-          <div class="row ${selectedClass}" data-id="${item.id}" data-kind="${item.kind}">
+          <div class="row ${selectedClass}" data-id="${item.id}" data-kind="${item.kind}" aria-selected="${state.selected === item.id ? 'true' : 'false'}">
             <div class="item">
-              <div class="fileicon">${icon}</div>
+              <div class="fileicon ${item.kind === 'folder' ? 'folder' : 'file'}"><span class="material-symbols-rounded">${icon}</span></div>
               <div>
                 <b>${escapeHtml(item.name)}</b>
                 <small>${item.kind} · ${human(itemSize)} · ${new Date(item.created_at).toLocaleString()}</small>
               </div>
             </div>
             <div class="row-actions">
-              <button data-more="${item.id}">•••</button>
-              <button data-info="${item.id}">ⓘ</button>
+              <button data-more="${item.id}" aria-label="More actions"><span class="material-symbols-rounded">more_vert</span></button>
+              <button data-info="${item.id}" aria-label="Item details"><span class="material-symbols-rounded">info</span></button>
             </div>
           </div>
         `;
@@ -212,7 +233,7 @@
     const currentFolder = state.folders.find(folder => folder.id === state.current);
     $('#crumb').textContent = currentFolder ? currentFolder.name : 'Home';
     $('#listTitle').textContent = state.view === 'recent' ? 'Recent files' : currentFolder ? 'Folder contents' : 'My files';
-    $('#crumbs').innerHTML = currentFolder ? '<button id="back" class="tool">← Back</button>' : '';
+    $('#crumbs').innerHTML = currentFolder ? '<button id="back" class="tool"><span class="material-symbols-rounded">arrow_back</span>Back</button>' : '';
 
     const backButton = $('#back');
     if (backButton) {
@@ -229,6 +250,10 @@
       return;
     }
 
+    if (!state.all.length) {
+      $('#table').innerHTML = '<div class="state loading"><span class="material-symbols-rounded state-icon">autorenew</span><b>Loading files…</b></div>';
+    }
+
     try {
       const data = await api('/api/items?all=1');
       state.all = data.items || [];
@@ -236,12 +261,12 @@
       updateStats();
       render();
     } catch (error) {
-      $('#table').innerHTML = `<div class="state">${escapeHtml(error.message)}</div>`;
+      $('#table').innerHTML = `<div class="state"><span class="material-symbols-rounded state-icon">error</span><b>Could not load files</b><small>${escapeHtml(error.message)}</small></div>`;
     }
   }
 
   function openFolder(id) {
-    $('#table').innerHTML = '<div class="state">Opening folder...</div>';
+    $('#table').innerHTML = '<div class="state loading"><span class="material-symbols-rounded state-icon">autorenew</span><b>Opening folder…</b></div>';
     setTimeout(() => {
       state.current = id;
       state.selected = null;
@@ -254,12 +279,12 @@
     const menu = $('#menuBox');
     const rect = anchor.getBoundingClientRect();
     menu.innerHTML = [
-      '<button data-a="download">↓ Download</button>',
-      '<button data-a="rename">✎ Rename</button>',
-      '<button data-a="move">↗ Move</button>',
-      '<button data-a="copy">⧉ Copy</button>',
-      '<button data-a="delete">⌫ Delete</button>',
-      '<button data-a="folder">＋ New Folder</button>',
+      '<button data-a="download"><span class="material-symbols-rounded">download</span>Download</button>',
+      '<button data-a="rename"><span class="material-symbols-rounded">drive_file_rename_outline</span>Rename</button>',
+      '<button data-a="move"><span class="material-symbols-rounded">drive_file_move</span>Move</button>',
+      '<button data-a="copy"><span class="material-symbols-rounded">content_copy</span>Copy</button>',
+      '<button data-a="delete"><span class="material-symbols-rounded">delete</span>Delete</button>',
+      '<button data-a="folder"><span class="material-symbols-rounded">create_new_folder</span>New Folder</button>',
     ].join('');
     menu.style.top = `${rect.bottom + 5}px`;
     menu.style.left = `${Math.max(8, rect.right - 175)}px`;
