@@ -44,7 +44,7 @@ All routes except `/api/auth` and `/api/health` require an `Authorization` beare
 - `PATCH /api/items` body: `{ "id": "<uuid>", "name": "New Name" }` or `{ "id": "<uuid>", "parent_id": "<folder_uuid>" }`
 - `DELETE /api/items?id=<uuid>`
 - `POST /api/items` body: `{ "action": "copy", "id": "<uuid>", "parent_id": "<folder_uuid|null>" }`
-- `POST /api/upload` multipart field `file`, optional `parent_id`
+- `POST /api/upload` multipart first file part (recommended field: `file`), optional `parent_id`
 - `GET /api/download?id=<uuid>`
 - `GET /api/files?parent_id=<uuid>` (compat listing endpoint)
 - `GET /api/stats`
