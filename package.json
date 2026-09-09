@@ -1,0 +1,1 @@
+{"name":"saad-drive","version":"1.0.0","private":true,"type":"module","scripts":{"dev":"vercel dev"},"dependencies":{"@vercel/node":"latest","jsonwebtoken":"latest","busboy":"latest"},"devDependencies":{"vercel":"latest"}}
