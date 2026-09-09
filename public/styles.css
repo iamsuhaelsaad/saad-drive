@@ -70,6 +70,7 @@ button { cursor: pointer; }
 .actions, .tools { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
 .icon, .tool { height: 40px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--ink); display: inline-flex; align-items: center; gap: 7px; transition: background-color .15s ease, color .15s ease, border-color .15s ease, box-shadow .15s ease, transform .12s ease; }
 .tool:hover, .icon:hover, .secondary:hover { background: var(--mint); border-color: oklch(78% .06 250); transform: translateY(-1px); }
+.tool:disabled, .primary:disabled, .secondary:disabled { opacity: .6; cursor: not-allowed; transform: none; }
 .tool.active { background: oklch(92% .06 255); color: var(--deep); border-color: oklch(82% .09 252); }
 .tool[aria-pressed='true'] { background: oklch(92% .06 255); color: var(--deep); border-color: oklch(82% .09 252); }
 .hero { align-items: end; margin-bottom: 23px; }
@@ -105,6 +106,7 @@ button { cursor: pointer; }
 .drop { margin-top: 16px; padding: 21px; border: 1px dashed var(--teal); border-radius: 15px; text-align: center; color: var(--muted); cursor: pointer; transition: .2s ease; background: color-mix(in oklch, var(--surface) 84%, white 16%); }
 .drop b { display: block; color: var(--ink); margin-bottom: 3px; }
 .drop.dragging { background: var(--mint); border-style: solid; }
+.drop.busy { opacity: .65; pointer-events: none; }
 .drop.dragging .material-symbols-rounded { animation: pop .2s ease; }
 .panel { padding: 18px; }
 .panel h3 { margin: 0 0 15px; font: 600 16px 'Space Grotesk'; }
