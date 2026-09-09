@@ -35,7 +35,7 @@ For a fresh database, run `schema.sql` once:
 The API also auto-initializes the schema on first authenticated request (idempotent and safe for existing data).
 
 ## API routes
-All routes except `/api/auth` and `/api/health` require `Authorization: ******
+All routes except `/api/auth` and `/api/health` require an `Authorization` bearer token.
 
 - `POST /api/auth` body: `{ "pin": "1234" }`
 - `GET /api/items?parent_id=<uuid>`
@@ -57,7 +57,16 @@ All routes except `/api/auth` and `/api/health` require `Authorization: ******
 4. Deploy.
 
 ## Frontend wiring
-Use the JWT in `Authorization: Bearer ...`. The existing UI needs to call `/api/items` to replace demo rows, send uploads to `/api/upload`, and download from `/api/download?id=...`.
+Use the JWT in request `Authorization` headers. The existing UI calls:
+- `/api/items` for listing and item mutations
+- `/api/upload` for multipart uploads
+- `/api/download?id=...` for downloads
+
+### Upload error behavior
+- `502 Telegram rejected the upload.` = Telegram API rejected/failed the upload request.
+- `502 Telegram response was incomplete after upload.` = Telegram responded but did not return a file id.
+- `409 ... already exists ...` = duplicate name conflict in destination folder.
+- `500 Upload succeeded on Telegram but saving metadata failed.` = Telegram upload completed but database persistence failed.
 
 ## UI behavior
 The frontend keeps the same API contract and storage model, with a Google Drive-inspired layout polish:
