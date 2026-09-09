@@ -1,30 +1,21 @@
 import { sql } from '@vercel/postgres';
-import { json, auth } from './_security.js';
+import { auth, cleanName, isUuid, json, readJsonBody } from './_security.js';
 import { ensureDb } from './_db.js';
 
-function readBody(req) {
-  return new Promise((resolve, reject) => {
-    let raw = '';
-    req.on('data', chunk => { raw += chunk; });
-    req.on('end', () => {
-      try {
-        resolve(JSON.parse(raw || '{}'));
-      } catch (error) {
-        reject(error);
-      }
-    });
-    req.on('error', reject);
-  });
-}
-
 function normalizeParentId(value) {
-  return value === undefined || value === null || value === '' ? null : value;
+  return value === undefined || value === null || value === '' ? null : String(value);
 }
 
 function httpError(status, message) {
   const error = new Error(message);
   error.status = status;
   return error;
+}
+
+function assertUuidOrNull(value, label = 'id') {
+  if (value === null) return null;
+  if (!isUuid(value)) throw httpError(400, `${label} must be a valid UUID`);
+  return value;
 }
 
 async function getItem(id) {
@@ -37,7 +28,7 @@ async function getItem(id) {
 }
 
 async function assertValidParent(parentId, sourceItem = null) {
-  const normalizedParentId = normalizeParentId(parentId);
+  const normalizedParentId = assertUuidOrNull(normalizeParentId(parentId), 'parent_id');
   if (!normalizedParentId) return null;
 
   const parent = await getItem(normalizedParentId);
@@ -111,7 +102,7 @@ export default async function handler(req, res) {
         return json(res, 200, { items: result.rows, parentId: null });
       }
 
-      const parent = normalizeParentId(req.query.parent_id);
+      const parent = assertUuidOrNull(normalizeParentId(req.query.parent_id), 'parent_id');
       const result = parent
         ? await sql`
             SELECT id, name, kind, parent_id, telegram_file_id, mime_type, size_bytes, created_at, updated_at
@@ -129,13 +120,13 @@ export default async function handler(req, res) {
       return json(res, 200, { items: result.rows, parentId: parent });
     }
 
-    const body = (req.method === 'POST' || req.method === 'PATCH') ? await readBody(req) : {};
+    const body = (req.method === 'POST' || req.method === 'PATCH') ? await readJsonBody(req) : {};
 
     if (req.method === 'POST') {
       if (body.action === 'copy') {
-        if (!body.id) return json(res, 400, { error: 'id is required' });
+        if (!body.id || !isUuid(String(body.id))) return json(res, 400, { error: 'id is required' });
 
-        const sourceItem = await getItem(body.id);
+        const sourceItem = await getItem(String(body.id));
         if (!sourceItem) return json(res, 404, { error: 'Source item not found' });
 
         const targetParentId = await assertValidParent(body.parent_id, sourceItem);
@@ -143,16 +134,17 @@ export default async function handler(req, res) {
         return json(res, 201, { item: copy });
       }
 
-      const { name, kind } = body;
+      const itemName = cleanName(body.name);
+      const kind = body.kind;
       const parentId = await assertValidParent(body.parent_id);
 
-      if (!name || !['file', 'folder'].includes(kind)) {
-        return json(res, 400, { error: 'name and kind are required' });
+      if (!itemName || !['file', 'folder'].includes(kind)) {
+        return json(res, 400, { error: 'Valid name and kind are required' });
       }
 
       const result = await sql`
         INSERT INTO drive_items(name, kind, parent_id)
-        VALUES(${name}, ${kind}, ${parentId})
+        VALUES(${itemName}, ${kind}, ${parentId})
         RETURNING *
       `;
 
@@ -160,21 +152,33 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'PATCH') {
-      const { id, name, parent_id } = body;
-      if (!id) return json(res, 400, { error: 'id is required' });
+      const id = String(body.id || '');
+      if (!isUuid(id)) return json(res, 400, { error: 'id is required' });
 
       const currentItem = await getItem(id);
       if (!currentItem) return json(res, 404, { error: 'Not found' });
 
-      const nextParentId = parent_id === undefined
-        ? currentItem.parent_id
-        : await assertValidParent(parent_id, currentItem);
+      const hasName = body.name !== undefined;
+      const hasParent = body.parent_id !== undefined;
+
+      if (!hasName && !hasParent) {
+        return json(res, 200, { item: currentItem });
+      }
+
+      let nextName = currentItem.name;
+      if (hasName) {
+        nextName = cleanName(body.name);
+        if (!nextName) return json(res, 400, { error: 'name must be a non-empty string up to 255 chars' });
+      }
+
+      const nextParentId = hasParent
+        ? await assertValidParent(body.parent_id, currentItem)
+        : currentItem.parent_id;
 
       const result = await sql`
         UPDATE drive_items
-        SET name = COALESCE(${name || null}, name),
-            parent_id = ${nextParentId},
-            updated_at = now()
+        SET name = ${nextName},
+            parent_id = ${nextParentId}
         WHERE id = ${id}
         RETURNING *
       `;
@@ -183,8 +187,8 @@ export default async function handler(req, res) {
     }
 
     if (req.method === 'DELETE') {
-      const id = req.query.id;
-      if (!id) return json(res, 400, { error: 'id is required' });
+      const id = String(req.query.id || '');
+      if (!isUuid(id)) return json(res, 400, { error: 'id is required' });
 
       const result = await sql`DELETE FROM drive_items WHERE id = ${id} RETURNING id`;
       return result.rowCount
@@ -196,6 +200,14 @@ export default async function handler(req, res) {
   } catch (error) {
     if (error?.status) {
       return json(res, error.status, { error: error.message });
+    }
+
+    if (error?.code === '23505') {
+      return json(res, 409, { error: 'An item with this name already exists in the destination folder' });
+    }
+
+    if (error?.code === '22P02') {
+      return json(res, 400, { error: 'Invalid UUID value provided' });
     }
 
     return json(res, 500, { error: 'Database error.' });
